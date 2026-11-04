@@ -1,0 +1,3855 @@
+From d04b127dfe9675e0a6bd40fd66117a57c1051d24 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 4 Nov 2026 12:43:59 -0400
+Subject: [PATCH 11/12] Document and version the 0.3.0 performance release
+
+Bump the crate and Python package to 0.3.0. Add docs/user-manual.md, a
+complete reference whose Python blocks validation/release_checks.py now
+executes after the tutorial's, and rewrite docs/architecture.md for the
+0.3.0 code with measured performance data. Update the README, tutorial
+and model card for score_matrix and the prepared SIR projection.
+
+Add application and optimization examples under examples/python/ with
+their recorded outputs, a Rust score_matrix example
+(examples/matrix_scan.rs) and the time-breakdown harness
+(examples/breakdown.rs). Add the cumulative native comparison, the time
+breakdown and the installed Python optimization runs under
+evidence/performance-0.3.0/. Keep release artifacts, patches and round
+evidence out of the source distribution.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ Cargo.lock                                    |   2 +-
+ Cargo.toml                                    |  10 +-
+ README.md                                     |  52 +-
+ docs/architecture.md                          | 402 +++++++--
+ docs/model.md                                 |   7 +-
+ docs/tutorial.md                              |  32 +-
+ docs/user-manual.md                           | 809 ++++++++++++++++++
+ evidence/performance-0.3.0/breakdown.json     | 112 +++
+ .../performance-0.3.0/cumulative/domain.json  |  36 +
+ .../performance-0.3.0/cumulative/domain2.json |  36 +
+ .../cumulative/invalid-repeat-1.json          |  36 +
+ .../cumulative/invalid-repeat-2.json          |  36 +
+ .../performance-0.3.0/cumulative/invalid.json |  36 +
+ .../cumulative/lean-domain.json               |  36 +
+ .../cumulative/lean-domain2.json              |  36 +
+ .../cumulative/lean-serial.json               |  36 +
+ .../cumulative/matrix-domain.json             |  36 +
+ .../cumulative/matrix-serial.json             |  36 +
+ .../performance-0.3.0/cumulative/one.json     |  36 +
+ .../cumulative/parallel.json                  |  36 +
+ .../performance-0.3.0/cumulative/serial.json  |  36 +
+ .../performance-0.3.0/cumulative/trace.json   |  36 +
+ .../python-optimization.json                  | 570 ++++++++++++
+ examples/breakdown.rs                         | 185 ++++
+ examples/matrix_scan.rs                       |  45 +
+ examples/python/README.md                     |  29 +
+ .../python/calendar_schedule_comparison.py    |  64 ++
+ examples/python/moran_fixation_study.py       |  52 ++
+ examples/python/optimize_fcmaes_cmaes.py      |  62 ++
+ examples/python/optimize_fcmaes_minimize.py   |  68 ++
+ examples/python/optimize_scipy_de.py          |  54 ++
+ .../outputs/calendar_schedule_comparison.txt  |  13 +
+ examples/python/outputs/matrix_scan.txt       |   2 +
+ .../python/outputs/moran_fixation_study.txt   |  46 +
+ .../python/outputs/optimize_fcmaes_cmaes.txt  |   6 +
+ .../outputs/optimize_fcmaes_minimize.txt      |   5 +
+ examples/python/outputs/optimize_scipy_de.txt |   5 +
+ .../python/outputs/sir_design_comparison.txt  |  31 +
+ .../python/outputs/sir_rate_landscape.txt     |  35 +
+ examples/python/sir_design_comparison.py      |  60 ++
+ examples/python/sir_rate_landscape.py         |  56 ++
+ pyproject.toml                                |   5 +-
+ validation/release_checks.py                  |  32 +-
+ 43 files changed, 3246 insertions(+), 109 deletions(-)
+ create mode 100644 docs/user-manual.md
+ create mode 100644 evidence/performance-0.3.0/breakdown.json
+ create mode 100644 evidence/performance-0.3.0/cumulative/domain.json
+ create mode 100644 evidence/performance-0.3.0/cumulative/domain2.json
+ create mode 100644 evidence/performance-0.3.0/cumulative/invalid-repeat-1.json
+ create mode 100644 evidence/performance-0.3.0/cumulative/invalid-repeat-2.json
+ create mode 100644 evidence/performance-0.3.0/cumulative/invalid.json
+ create mode 100644 evidence/performance-0.3.0/cumulative/lean-domain.json
+ create mode 100644 evidence/performance-0.3.0/cumulative/lean-domain2.json
+ create mode 100644 evidence/performance-0.3.0/cumulative/lean-serial.json
+ create mode 100644 evidence/performance-0.3.0/cumulative/matrix-domain.json
+ create mode 100644 evidence/performance-0.3.0/cumulative/matrix-serial.json
+ create mode 100644 evidence/performance-0.3.0/cumulative/one.json
+ create mode 100644 evidence/performance-0.3.0/cumulative/parallel.json
+ create mode 100644 evidence/performance-0.3.0/cumulative/serial.json
+ create mode 100644 evidence/performance-0.3.0/cumulative/trace.json
+ create mode 100644 evidence/performance-0.3.0/python-optimization.json
+ create mode 100644 examples/breakdown.rs
+ create mode 100644 examples/matrix_scan.rs
+ create mode 100644 examples/python/README.md
+ create mode 100644 examples/python/calendar_schedule_comparison.py
+ create mode 100644 examples/python/moran_fixation_study.py
+ create mode 100644 examples/python/optimize_fcmaes_cmaes.py
+ create mode 100644 examples/python/optimize_fcmaes_minimize.py
+ create mode 100644 examples/python/optimize_scipy_de.py
+ create mode 100644 examples/python/outputs/calendar_schedule_comparison.txt
+ create mode 100644 examples/python/outputs/matrix_scan.txt
+ create mode 100644 examples/python/outputs/moran_fixation_study.txt
+ create mode 100644 examples/python/outputs/optimize_fcmaes_cmaes.txt
+ create mode 100644 examples/python/outputs/optimize_fcmaes_minimize.txt
+ create mode 100644 examples/python/outputs/optimize_scipy_de.txt
+ create mode 100644 examples/python/outputs/sir_design_comparison.txt
+ create mode 100644 examples/python/outputs/sir_rate_landscape.txt
+ create mode 100644 examples/python/sir_design_comparison.py
+ create mode 100644 examples/python/sir_rate_landscape.py
+
+diff --git a/Cargo.lock b/Cargo.lock
+index faae970..0a72e56 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -114,7 +114,7 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
+ 
+ [[package]]
+ name = "population-epidemiology"
+-version = "0.2.0"
++version = "0.3.0"
+ dependencies = [
+  "crn-craft",
+  "libm",
+diff --git a/Cargo.toml b/Cargo.toml
+index 597e0f8..7bd8ec0 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -1,10 +1,18 @@
+ [package]
+ name = "population-epidemiology"
+-version = "0.2.0"
++version = "0.3.0"
+ edition = "2024"
+ rust-version = "1.88"
+ description = "Bounded population-epidemiology research evaluator"
+ license = "MIT"
++# Release artifacts, patch series and timing evidence stay out of the source distribution.
++exclude = [
++  "/packages/",
++  "/patches/",
++  "/evidence/performance-0.3.0/",
++  "/evidence/release-*/",
++  "/SHA256SUMS",
++]
+ 
+ [lib]
+ crate-type = ["rlib", "cdylib"]
+diff --git a/README.md b/README.md
+index e39eeb9..0237fe9 100644
+--- a/README.md
++++ b/README.md
+@@ -1,17 +1,23 @@
+-# population-epidemiology 0.2.0
++# population-epidemiology 0.3.0
+ 
+-A bounded research evaluator. See the [model card](docs/model.md) for units,
+-equations and supported behavior. The accompanying implementation log
+-records which milestones ran and which use a bounded fallback.
+-See the [tutorial](docs/tutorial.md) and [architecture](docs/architecture.md).
+-The [0.1.0 implementation record](docs/implementation-0.1.0.md) preserves the original scope.
++A bounded research evaluator for small stochastic population models: a
++fixed-population SIR model solved by finite state projection, neutral
++two-mutant Moran drift, and an exact two-state rate calendar. See the
++[user manual](docs/user-manual.md) for every model field, API and status,
++the [tutorial](docs/tutorial.md) for a short walk-through, the
++[model card](docs/model.md) for units and equations, and the
++[architecture guide](docs/architecture.md) for the implementation and
++measured performance. The [0.3.0 performance log](population-epidemiology-performance-log-0.3.0.md)
++records the ten performance rounds. The [0.1.0 implementation record](docs/implementation-0.1.0.md)
++preserves the original scope.
+ 
+-## Rust CLI and native example
++## Rust CLI and native examples
+ 
+ ```sh
+ cargo run --release --locked -- describe
+ cargo run --release --locked -- run models/request.json
+ cargo run --release --locked --example sweep -- models/example.json
++cargo run --release --locked --example matrix_scan -- models/example.json
+ ```
+ 
+ The CLI uses versioned JSON with exact model-byte SHA-256, candidate IDs and
+@@ -32,17 +38,31 @@ case = load_example()
+ prepared = Prepared(case["model"])
+ row = prepared.evaluate(case["parameters"], trace=True)
+ assert row["status"] == "complete"
+-print(row["score"])
++scores, statuses, steps = prepared.score_matrix([case["parameters"], [0.9, 0.5]])
++print(row["score"], scores, statuses)
+ ```
+ 
+-`Prepared.batch` crosses into native code once per batch. A set of scoped
+-workers evaluates candidates in isolation and returns records in input order.
+-The local Python campaign commits results to SQLite, preserves interrupted
+-attempts and reuses completed records by candidate, scenario, settings and
+-build identity. Fixed-work replay is scoped to the tested build.
+-Run `validation/run_campaign.py MODULE models/campaign.json campaign.sqlite`
++`Prepared.batch` and `Prepared.scores` cross into native code once per
++batch with JSON candidates and records. `Prepared.score_matrix` takes a
++list of parameter rows or a 2-D NumPy array and returns scores, statuses
++and steps without JSON; use it inside optimizers. Workers evaluate
++candidates in isolation and results come back in input order. The local
++Python campaign commits results to SQLite, preserves interrupted attempts
++and reuses completed records by candidate, scenario, settings and build
++identity. Run `validation/run_campaign.py MODULE models/campaign.json campaign.sqlite`
+ with the installed package to evaluate or resume the included manifest.
+ 
++[`examples/python/`](examples/python/README.md) has application studies
++(rate landscapes, sampling designs, Moran fixation, calendar schedules) and
++optimization examples with SciPy and fcmaes, with their recorded outputs.
++
++## Performance
++
++On a 2-vCPU host, 0.3.0 evaluates the 96-candidate SIR batch 5.6x faster
++than 0.2.0 with full records and 11.1x faster through the matrix API, and
++the installed SciPy search runs 2.2x to 2.9x faster end to end. See the
++architecture guide's performance section and `evidence/performance-0.3.0/`.
++
+ ## Verify and rebuild
+ 
+ ```sh
+@@ -57,3 +77,7 @@ Independent numerical scripts use Python 3.12. The oscillator and population
+ oracles use NumPy 2.3.5 and SciPy 1.17.0. The optional
+ `validation/optimize.py population_epidemiology` demonstrates an in-process SciPy DE objective.
+ The native sweep needs only the Rust crate. See `evidence/` for actual runs.
++The CRN-craft core is vendored by path because it is not on crates.io, so
++the crate cannot be packaged for a registry; the source distribution and
++wheel carry it. The ordered change series is in `patches/0.3.0/` (from the
++0.2.0 import) and `patches/0.2.0/` (the 0.2.0 series from 0.1.0).
+diff --git a/docs/architecture.md b/docs/architecture.md
+index 8fb6927..800e160 100644
+--- a/docs/architecture.md
++++ b/docs/architecture.md
+@@ -1,102 +1,348 @@
+ # Population epidemiology architecture
+ 
+-Version 0.2.0. Evaluate a small, fixed-population SIR model, neutral two-mutant Moran drift, and an exact two-state rate calendar.
++Version 0.3.0. The package evaluates three small stochastic population
++models behind one prepared batch engine: a fixed-population SIR model
++solved by finite state projection (FSP), neutral two-mutant Moran drift,
++and an exact two-state rate calendar. This document describes the code as
++of 0.3.0 and its measured performance. The [user manual](user-manual.md)
++covers usage and the [model card](model.md) the equations.
+ 
+ ## Evaluation pipeline
+ 
+ ```mermaid
+ flowchart TD
+-    P["Prepared model"] --> B["Candidate batch"]
+-    B --> V["Validate IDs and budgets"]
+-    V -->|Single worker or candidate| S["Inline evaluation"]
+-    V -->|Multiple workers| W["Scoped worker evaluation"]
+-    S --> D["Domain kernel and work counter"]
++    M["Model JSON"] --> P["Prepared::new: hash, validate, prepare domain structure"]
++    P --> J["evaluate_json / scores_json: decode candidates and budget"]
++    P --> X["score_matrix: row-major f64 parameters and budget"]
++    J --> V["Validate budget, IDs, sizes and traces"]
++    X --> W["Validate budget, rows and dimension"]
++    V --> D["dispatch: inline or scoped workers, results in index order"]
+     W --> D
+-    D --> R["Ordered typed result"]
+-    R -->|Full| F["Metrics and optional trace"]
+-    R -->|Lean| L["Score and status"]
++    D --> K["Domain kernel with Work step counter"]
++    K -->|full| F["Record with serialized metrics, optional trace"]
++    K -->|lean| L["Record with metrics: null"]
++    K -->|matrix| S["MatrixScore: status, steps, score"]
++    F --> O["Result JSON"]
++    L --> O
+ ```
+ 
+ | Boundary | Location | Responsibility |
+ | --- | --- | --- |
+-| Request and CLI | `src/main.rs`, `src/lib.rs`, `models/request.json` | Versioned request schema, exact model-byte hash, typed validation, JSON output and exit code |
+-| Python boundary | `python/population_epidemiology/__init__.py`, PyO3 in `src/lib.rs` | Encode once per batch, release the Python GIL during native evaluation, decode the typed result envelope |
+-| Prepared engine | `src/lib.rs` | Own immutable domain data, enforce batch rules, dispatch candidates and retain ordered result rows |
+-| Domain | `src/domain.rs` | Bind the candidate, execute model logic, classify status and compute a minimization objective |
+-| Campaign | `python/population_epidemiology/campaign.py` | Local SQLite replay, attempt journal and complete-result caching |
+-| Verification | `validation/`, `examples/`, `evidence/` | Independent checks, executable examples and paired performance observations |
++| Request and CLI | `src/main.rs`, `run` in `src/lib.rs`, `models/request.json` | versioned request schema, exact model-byte hash, typed validation, JSON output and exit code |
++| Python boundary | `python/population_epidemiology/__init__.py`, PyO3 module in `src/lib.rs` | encode once per batch, release the GIL during native evaluation, decode the result envelope; `score_matrix` passes rows without JSON |
++| Prepared engine | `src/lib.rs` | own immutable domain data, enforce batch rules, dispatch candidates or rows, keep ordered results |
++| Domain | `src/domain.rs` | bind a candidate, run the model kernel, classify status, compute the minimization objective and serialized metrics |
++| SIR projection | `src/sir_fsp.rs` | rate-independent SIR state space and generator layout, prepared uniformization that reproduces the vendored solver |
++| Vendored solver | `vendor/crn-craft` | CRN-craft 0.2.0-dev.1 core; FSP reference and fallback path |
++| Campaign | `python/population_epidemiology/campaign.py` | local SQLite replay, attempt journal and complete-result caching |
++| Verification | `validation/`, `examples/`, `evidence/` | independent checks, executable examples, paired performance observations and the time breakdown |
+ 
+ ## Data and execution contracts
+ 
+-`Prepared::new` hashes the model bytes, deserializes the model and
+-validates its bounds before building domain caches. The Python
+-wrapper encodes models with sorted keys and finite JSON numbers.
+-Two inputs that differ in their serialized representation can
+-have different provenance hashes. Result and request schema tags
+-remain at 0.1. Package version is reported separately.
+-
+-Every batch validates candidate count (1–4096), unique IDs, parameter
+-vector length (up to 64), requested workers (1–64) and trace count
+-(up to 16). Parallel workers claim indexes through an atomic cursor.
+-Each assigned index owns a result slot written once. After workers
+-join, output is serialized in input order. Single-worker or singleton
+-calls run inline. The typed prepared envelope borrows candidate IDs
+-until serialization completes. The CLI retains its full `Value` API.
+-
+-`Work` counts domain-defined steps per candidate. Its fast branch
+-handles unmonitored steps below the limit. Monitored steps check
+-the cancel file, then batch deadline, then work budget. Domain
+-checks can still reject an invalid candidate before it takes a step.
+-Cancellation and deadlines are cooperative. The wall clock can
+-change which candidates finish, while fixed-work replays should agree
+-independent of worker count. Candidate parallelism creates scoped
+-threads per batch. Concurrent callers should account for total
+-worker demand when choosing batch settings.
+-
+-Full records contain domain metrics and any requested trace.
+-`scores_json` in Rust and `Prepared.scores` in Python return the
+-same record keys with null metrics and reject traced candidates.
+-Both retain per-candidate limits, diagnostics needed for feasibility,
+-numeric score checks and failure status. Full replay restores
+-inspection details for the selected candidate.
++`Prepared::new` hashes the model bytes with SHA-256, deserializes the
++model with unknown fields rejected and validates its bounds before
++building domain structure. The Python wrapper encodes models with sorted
++keys, compact separators and finite numbers, so equal dictionaries give
++equal hashes. Request and result schema tags remain at 0.1, and the
++package version is reported separately.
++
++Every JSON batch validates the budget (workers 1–64, `max_steps`
++1–100,000,000, `wall_ms` 1–86,400,000 when present), the candidate count
++(1–4,096), unique non-empty IDs of at most 128 bytes, parameter vectors of
++at most 64 values and at most 16 traced candidates. `score_matrix`
++applies the same budget checks to its row count and requires a
++dimension of at most 64. It has no IDs and no duplicate check.
++
++`dispatch` evaluates a single candidate, or any batch with one worker, on
++the calling thread. Otherwise it starts `min(workers, count)` scoped
++threads that claim indexes from an atomic cursor. Each index owns one
++result slot written once, and results are collected in index order, so
++records never depend on scheduling. JSON batches and matrix calls share
++this code, the budget checks and the per-candidate `outcome` function,
++which is how the matrix API stays equal to `scores_json` bit for bit.
++
++`Work` counts domain-defined logical steps per candidate. Unmonitored
++work (no deadline and no cancel file) can only stop at `max_steps`, so its
++fast path is an increment and compare, and `Work::advance` charges many
++steps at once with the same status and count as charging them one by one.
++Monitored steps check the cancel file, then the batch deadline, then the
++budget. Cancellation and deadlines are cooperative. Fixed-work results do
++not depend on the worker count.
++
++Three result paths share the evaluation:
++
++- **Full** (`evaluate_json`, Python `batch` and `evaluate`): records with
++  metrics. Since 0.3.0 a domain returns its metrics as serialized JSON
++  (`Box<RawValue>`), which the record embeds verbatim. The CLI's
++  `serde_json::Value` result parses that text back, so CLI output is
++  unchanged.
++- **Lean** (`scores_json`, Python `scores`): the same record keys with
++  `metrics: null`. Traced candidates are rejected. Metrics closures are
++  never run.
++- **Matrix** (`score_matrix`, Python `score_matrix`): typed
++  `MatrixScore { status, steps, score }` rows from a row-major `&[f64]`.
++  It skips candidate decoding, ID checks and record encoding. The Python
++  method takes a list of rows (or a 2-D NumPy array through the wrapper),
++  rejects ragged rows, releases the GIL and returns scores (NaN unless
++  complete), statuses and steps.
+ 
+ ## Domain internals
+ 
+-| Model | Prepared state | Evaluation and checks |
+-| --- | --- | --- |
+-| SIR | Observations, train boundary, time grid, initial counts and tolerance | Bind two rates, construct the CRN count model and FSP run, run the bundled solver with one inner thread, project infected first moments, score observed training points |
+-| Moran | Triangular states, initial offset, flat transitions and row offsets | Allocate two probability vectors, apply the neutral recurrence in row order, derive complete marginals and optionally emit the joint law |
+-| Calendar | Exact times and on-probabilities at each boundary | Charge one logical step per segment, return last probability, serialize cached boundaries in full mode |
+-
+-Moran topology has `(N+1)(N+2)/2` states. Parent/death outcome order is
+-preserved, including repeated destinations from self replacement. CSR
+-offsets avoid a heap allocation per row and improve locality without
+-changing probability accumulation order. Fixed-work results still
+-charge the logical topology visits and propagation visits. The calendar
+-uses `expm1` for the segment change and caches the exact constant-rate
+-recurrence. Its unmonitored path charges all segment visits in one
+-operation. Deadline and cancel-file runs check each logical step.
+-
+-The SIR API retains the CRN model and run hashes and optional FSP trace
+-when emitting full records. The companion and FSP solver count work at different boundaries. The CRN solver
+-receives the remaining deadline and cancel file and returns its own work
+-and mass diagnostics. Outer workers parallelize candidates. There is
+-still an FSP topology build per rate binding and SIR remains the dominant
+-cost for this fixture. See the [model card](model.md) for each objective.
++### SIR
++
++Preparation validates the model and then builds the CRN-craft model and
++FSP run documents for a probe binding. If `crn_craft::check_bytes`
++accepts them, every positive normal rate binding is accepted too, because
++CRN-craft's validation of these documents depends on the rate values only
++through their finiteness and sign and the zero-coefficient warning. `Projection::new` in
++`src/sir_fsp.rs` then discovers the reachable states breadth first in
++CRN-craft's order (infection before recovery), builds the generator by
++column and checks the solver's output-reservation, workspace and
++output-size limits once. A model that CRN-craft rejects, for example a
++save grid that does not start at 0, keeps no projection, so every
++candidate takes the vendored path and reports its diagnostics.
++
++Every transition lowers 2S + I by one, so breadth-first discovery
++numbers states level by level, and within a level by ascending S. Each
++generator column (S, I) therefore adds, in ascending source order, the
++recovery source (S, I+1), the infection source (S+1, I-1) and its
++diagonal. Preparation verifies this order for every column and that each
++S row of states is a contiguous I range. The series vectors then live on
++a zero-padded (S, I) grid, and each product row runs over three
++contiguous streams. If the check failed, a fixed three-slot column kernel
++with explicit source indexes would be used. A padded slot adds +0.0 to a
++non-negative sum, and the first product equals `0.0 + product`, so both
++kernels add every column's terms exactly as the vendored solver does.
++
++Per candidate, the domain computes `infection = beta / N` and, for an
++unmonitored candidate with positive normal rates, binds the two
++mass-action coefficients to the projection: CRN-craft's propensity
++products and their normal-range guards, the exit sums in ascending target
++order, the uniformization rate, normalization, the Poisson series with
++its tail rule, and the snapshot moments, mass and checks in discovery
++order. Means, error diagnostics and the FSP work count are bit-identical
++to `crn_craft::fsp::solve`. A traced candidate also gets the full
++`FspResult`, assembled from the same snapshots with the document hashes.
++The domain falls back to the vendored solver for monitored budgets (the
++solver polls the deadline and cancel file inside the solve), for rates
++that are zero or not normal (they change the reachable set or the
++propensity kernel), and whenever the prepared path meets a runtime limit
++such as the solver's work cap. The fallback then produces the identical
++result or diagnostic. Unit tests compare both kernels with the vendored
++solver bit for bit over about 430 bindings and compare whole records
++against a forced vendored path.
++
++Full records still build the two CRN-craft documents per candidate to
++report `crn_model_sha256` and `crn_run_sha256`. SIR metrics serialize
++from typed structs whose fields follow the sorted key order of a `Value`
++map, including sorted mirrors of the traced `FspResult`, so the bytes
++match the earlier `json!` construction. SIR charges two logical steps per
++candidate, before and after the solve, whichever path runs.
++
++### Moran
++
++States are the triangular (a, b) pairs, (N+1)(N+2)/2 of them. A target
++(a, b) receives mass only from (a-1, b), (a-1, b+1), (a, b-1), its own
++self-replacement entries (wild type, A, B), (a, b+1), (a+1, b-1) and
++(a+1, b), which is ascending source index order. Preparation places every
++transition of the parent/death enumeration into one of nine per-target
++weight slots, with weight 0 for missing transitions. Each update then
++sweeps a zero-padded (N+3) x (N+3) grid row by row with contiguous loads.
++Zero-weight slots add +0.0, so each target's additions are the same as
++the original scatter update; a unit test checks this bit for bit over 11
++population and update settings. The final law is read back in triangular
++order for the marginals, mass and optional joint trace. Logical steps are
++one per state for construction plus one per state per update. They are
++charged in bulk when unmonitored and per state, row by row, when
++monitored.
++
++### Calendar
++
++Preparation computes the exact boundary probabilities with the `expm1`
++form of the constant-rate recurrence and renders the full-record metrics
++JSON once. A candidate charges one logical step per segment (in bulk when
++unmonitored), returns the final probability and, in full mode, copies the
++prepared metrics.
++
++## Structural changes in 0.3.0
++
++| Round | Change |
++| --- | --- |
++| 1 | `Prepared::score_matrix`, `MatrixScore`, the Python `score_matrix`, a shared `dispatch` and `outcome` path, a matrix benchmark mode |
++| 2 | prepared SIR projection with rate binding and vendored-solver fallback (`src/sir_fsp.rs`) |
++| 3 | Moran update gathered by target state |
++| 4 | bulk charging of unmonitored Moran steps |
++| 5 | metrics carried as serialized JSON; calendar metrics rendered at preparation |
++| 6 | traced SIR candidates through the prepared projection |
++| 7 | SIR metrics serialized from typed, key-sorted structs |
++| 8 | SIR generator columns as three fixed slots |
++| 9 | Moran stencil over a padded triangular grid |
++| 10 | SIR series as a stencil on the (S, I) grid |
++
++`examples/performance.rs` keeps its 0.2.0 workloads and flags and adds
++`CRAFT_MATRIX=1`. `validation/performance_pair.py` adds `--before-matrix`
++and `--after-matrix`; a matrix side normalizes `metrics` and `detail` to
++null on both sides. `examples/breakdown.rs` measures the time breakdown
++below.
++
++### Vendored CRN-craft and packaging
++
++`vendor/crn-craft` is unchanged from 0.2.0; there is no vendored patch.
++The prepared SIR path lives in this crate and calls only CRN-craft's
++public `check_bytes`, `sha256`, `fsp::solve` and `fsp` types. CRN-craft
++0.2.0 is not on crates.io: `cargo info crn-craft` and the crates.io API
++report that the crate does not exist (checked on 4 November 2026). The
++dependency therefore stays a path dependency, and `cargo package` cannot
++produce a registry crate for this package. The source tree, source
++distribution and wheel carry the pinned core.
+ 
+ ## Persistence and boundaries of evidence
+ 
+ The local campaign hashes the installed extension bytes plus each
+-scenario, model, candidate and work settings to locate reusable
+-records. SQLite stores completed, invalid and infeasible results,
+-and keeps an append-only journal of attempts. Cancelled or time-
+-limited attempts remain in the journal and can be retried. SQLite
+-commits each chunk atomically. A new extension build changes the
+-cache namespace. The current workflow is local and exposes no
++scenario, model, candidate and work settings to locate reusable records.
++SQLite stores complete, invalid and infeasible results and an append-only
++journal of attempts. Cancelled or time-limited attempts stay in the
++journal and are retried. Each chunk commits atomically. A new extension
++build changes the cache namespace. The workflow is local and has no
+ distributed worker protocol.
+ 
+-The package contains source, a source distribution, and a validated
+-Linux x86-64 wheel. The included performance log distinguishes the
+-native prepared boundary, complete Python search and clean build.
+-See the [tutorial](tutorial.md) for exact commands and
+-[the model card](model.md) for equations and research scope.
++## Performance
++
++All numbers in this section were measured on one host: **2 vCPUs, Intel(R)
++Xeon(R) Processor @ 2.10GHz (KVM), Rust 1.97.0, CPython 3.12**. The 0.2.0
++log's numbers came from a different host (AMD EPYC 9V74, 4 CPUs, Rust
++1.88) and are not combined with these. The host was shared with other
++build jobs: absolute times drifted by up to about 20% between periods,
++so only ratios measured within one alternating pair are compared.
++
++### 0.2.0 to 0.3.0
++
++`validation/performance_pair.py` with `--samples 11` against the 0.2.0
++benchmark binary built from the import commit. Each sample alternates the
++order of the two binaries and times JSON decoding, evaluation, checks and
++encoding after warm-up, excluding process start and model preparation.
++The `parallel` workload keeps its four workers on this 2-vCPU host. The
++0.2.0 baseline for the two matrix rows is its lean `scores_json` path,
++because 0.2.0 has no matrix API. Evidence:
++`evidence/performance-0.3.0/cumulative/*.json`.
++
++| Workload | Case | 0.2.0 ms | 0.3.0 ms | 0.2.0 / 0.3.0 |
++| --- | --- | ---: | ---: | ---: |
++| Single prepared SIR evaluation, full record | `one` | 0.191 | 0.031 | 6.09x |
++| 96 SIR candidates, one worker, full records | `serial` | 14.643 | 2.598 | 5.64x |
++| 96 SIR candidates, four workers on 2 vCPUs | `parallel` | 9.466 | 1.943 | 4.87x |
++| 12 traced SIR candidates | `trace` | 2.289 | 0.593 | 3.86x |
++| 1,024 invalid SIR candidates, 63 values each | `invalid` | 1.640 | 1.936 | 0.85x |
++| 48 Moran cases, full records | `domain` | 4.088 | 2.468 | 1.66x |
++| 48 calendar cases, full records | `domain2` | 2.710 | 0.051 | 52.87x |
++| 96 SIR candidates, lean | lean `serial` | 14.088 | 1.456 | 9.68x |
++| 48 Moran cases, lean | lean `domain` | 4.710 | 3.160 | 1.49x |
++| 48 calendar cases, lean | lean `domain2` | 0.013 | 0.013 | 1.02x |
++| 96 SIR candidates, matrix (0.2.0 lean) | matrix `serial` | 14.266 | 1.291 | 11.05x |
++| 48 Moran cases, matrix (0.2.0 lean) | matrix `domain` | 4.454 | 2.468 | 1.80x |
++
++No round targeted the `invalid` workload, which is dominated by decoding
++64,512 JSON numbers. Two further 11-sample pairs of the same binaries
++gave 1.02x and 0.95x (`cumulative/invalid-repeat-*.json`), so that path
++is unchanged within this host's noise. Lean `domain2` was already 0.013
++ms in 0.2.0, essentially JSON only.
++
++### Time breakdown
++
++`examples/breakdown.rs` times each phase through the public API: decoding
++the candidate JSON alone, the matrix API (evaluation without JSON), lean
++`scores_json` and full `evaluate_json`, as medians over 41 alternating
++rounds with one worker. Evidence: `evidence/performance-0.3.0/breakdown.json`.
++
++| Workload | Candidates | Prepare µs | Decode µs | Matrix µs | Lean µs | Full µs | Lean − matrix µs | Full − lean µs | Full output bytes |
++| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
++| SIR, one candidate | 1 | 62.1 | 0.1 | 14.7 | 15.5 | 28.0 | 0.8 | 12.5 | 1,374 |
++| SIR serial | 96 | 48.2 | 13.2 | 1,071.4 | 1,092.2 | 2,079.5 | 20.8 | 987.2 | 117,012 |
++| SIR invalid (63 values) | 1,024 | 51.0 | 1,141.9 | 23.8 | 1,458.3 | 1,466.1 | 1,434.5 | 7.8 | 133,279 |
++| Moran (N = 18, 65 updates) | 48 | 15.2 | 5.4 | 2,278.4 | 2,300.4 | 2,473.0 | 22.0 | 172.7 | 46,815 |
++| Calendar (350 segments) | 48 | 152.5 | 4.3 | 0.8 | 13.0 | 39.0 | 12.3 | 26.0 | 449,679 |
++
++Per-call cost per candidate:
++
++| Workload | Matrix µs | Lean µs | Full µs |
++| --- | ---: | ---: | ---: |
++| SIR, one candidate per call | 14.71 | 15.53 | 28.05 |
++| SIR, 96 per call | 11.16 | 11.38 | 21.66 |
++| Moran, 48 per call | 47.47 | 47.92 | 51.52 |
++| Calendar, 48 per call | 0.02 | 0.27 | 0.81 |
++
++One SIR candidate through the prepared projection took 16.1 µs (lean)
++and 46.5 µs (traced, full). Through the vendored solver, which a
++cancel-file budget selects, it took 154.6 µs and 173.3 µs.
++
++### Worker scaling
++
++The 96-candidate SIR batch with 1, 2 and 4 workers (medians of 41 rounds,
++`breakdown.json`). This host has two vCPUs.
++
++| Workers | Matrix µs | Lean µs | Full µs |
++| ---: | ---: | ---: | ---: |
++| 1 | 1,459 | 1,608 | 2,754 |
++| 2 | 987 | 946 | 1,714 |
++| 4 | 955 | 1,050 | 1,905 |
++
++Two workers gave 1.5x to 1.7x. Four workers on two vCPUs gave no further
++gain. The one-worker matrix and lean times here differ from the phase
++table because the two were measured minutes apart on the shared host.
++
++### Installed Python optimization
++
++`validation/optimize_performance.py` ran SciPy differential evolution
++(seed 17, 48 evaluations) plus a traced replay of the winner, seven
++interleaved times per configuration on one logical CPU (`taskset -c 0`),
++in fresh CPython 3.12 venvs with the 0.2.0 wheel from the 0.2.0 delivery
++and the 0.3.0 wheel built from the extracted 0.3.0 source distribution.
++Times exclude imports. The total median is computed per run. Evidence:
++`evidence/performance-0.3.0/python-optimization.json`.
++
++| Configuration | Prepare ms | Search ms | Replay ms | Total ms | 0.2.0 full / total |
++| --- | ---: | ---: | ---: | ---: | ---: |
++| v0.2.0-full | 0.092 | 17.068 | 0.479 | 17.694 | 1.00x |
++| v0.2.0-scores | 0.091 | 15.481 | 0.441 | 16.011 | 1.11x |
++| v0.3.0-full | 0.294 | 7.366 | 0.255 | 7.909 | 2.24x |
++| v0.3.0-scores | 0.295 | 5.564 | 0.288 | 6.125 | 2.89x |
++| v0.3.0-matrix | 0.350 | 5.639 | 0.329 | 6.367 | 2.78x |
++
++All configurations made 48 objective calls with 0 failures, selected
++`[0.7, 0.4]` and replayed the score 1.9996263162291143e-24. In 0.3.0 the
++search spends about 117 µs per evaluation, mostly in SciPy's
++one-at-a-time differential evolution, against 15–30 µs of native
++evaluation, so the lean and matrix objectives are equal within noise
++here. Preparation grew from 0.09 to about 0.3 ms because it now validates
++the CRN-craft documents and builds the projection.
++
++### What dominates now, and which API to use
++
++- **SIR full records** spend about half their time on provenance: each
++  record builds and hashes the two CRN-craft documents and serializes
++  five diagnostic rows. Templating the documents at preparation was tried
++  and rejected at 1.02x on this noisy host
++  (`evidence/performance-0.3.0/rejected/`). It remains the largest
++  known saving for full SIR records.
++- **SIR lean and matrix** calls are dominated by the uniformization
++  series (about 119 terms over 75 states for the packaged fixture), which
++  must keep the vendored solver's arithmetic to stay bit-identical.
++- **Moran** is dominated by the stencil sweep: (N+1)(N+2)/2 states times
++  nine slots per update.
++- **Calendar** evaluation is a constant-time lookup. Its full records are
++  dominated by copying the 350-pair boundary list into the output.
++- **Large invalid batches** are dominated by JSON number parsing.
++
++Guidance:
++
++- Use `score_matrix` for optimizers and large scans, from Rust or
++  Python. Use `scores` when IDs or `detail` strings matter. Use full
++  records, and traces, only for the candidates you inspect.
++- Use at most one worker per CPU. On two vCPUs, two workers gave the best
++  times, and single candidates always run inline.
++- Keep `wall_ms` and `cancel_file` out of tight SIR loops. Monitored
++  budgets take the vendored solver at about ten times the cost per
++  candidate. Use them for long Moran runs and campaigns.
++- From Python, batch candidates per call (a whole population in one
++  `score_matrix` call), since per-call Python and optimizer overheads
++  exceed the native SIR cost for this fixture.
+diff --git a/docs/model.md b/docs/model.md
+index f7f0166..8ff051e 100644
+--- a/docs/model.md
++++ b/docs/model.md
+@@ -6,7 +6,12 @@ Both rates are per input time unit. CRN-craft FSP enumerates reachable
+ count states and propagates the finite distribution. Bounds cover the
+ entire fixed population. Its result exposes physical leakage, Poisson
+ series bounds and the roundoff mass residual. It preserves unnormalized
+-probabilities. Trace mode includes the original FSP result.
++probabilities. Trace mode includes the full FSP result. Since 0.3.0 the
++package builds the SIR state space and generator layout once per model and
++runs the same uniformization arithmetic for each rate binding, so means,
++diagnostics, traces and work counts are bit-identical to the vendored
++CRN-craft solver, which still runs for deadline or cancel-file budgets
++and for zero rates.
+ 
+ The fitting target is the model's expected infected count at declared
+ sample times. Training uses mean squared error over unmasked observations.
+diff --git a/docs/tutorial.md b/docs/tutorial.md
+index 59ea357..acf9ec9 100644
+--- a/docs/tutorial.md
++++ b/docs/tutorial.md
+@@ -1,6 +1,6 @@
+ # Population epidemiology tutorial
+ 
+-Evaluate a small, fixed-population SIR model, neutral two-mutant Moran drift, and an exact two-state rate calendar. This guide uses the examples shipped with version 0.2.0.
++Evaluate a small, fixed-population SIR model, neutral two-mutant Moran drift, and an exact two-state rate calendar. This guide uses the examples shipped with version 0.3.0. The [user manual](user-manual.md) is the complete reference.
+ 
+ ## 1. Install and run the example
+ 
+@@ -110,14 +110,28 @@ Replace the duplicate vectors with distinct choices for a real search.
+ Use `batch` if you need the full metrics for every row. `scores` returns
+ ordered records with score, status, steps and detail, and `metrics: null`.
+ It rejects any candidate with `trace: true`. A one-worker batch or a
+-singleton runs inline. Larger batches can try two or four workers.
++singleton runs inline. Larger batches can use up to one worker per CPU.
+ Measure before setting a worker count for a real workload.
+ 
++Inside an optimizer, `score_matrix` skips JSON entirely. It takes a list
++of equal-length parameter rows or a 2-D NumPy array and returns three
++lists: scores (NaN unless complete), statuses and logical steps. They
++match what `scores` reports for the same vectors, bit for bit.
++
++```python
++rows = [case["parameters"], [0.9, 0.5], [6.0, 0.4]]
++values, statuses, steps = prepared.score_matrix(rows, workers=2)
++print(values, statuses, steps)
++assert statuses == ["complete", "complete", "invalid"]
++penalized = [v if s == "complete" else 1e20 for v, s in zip(values, statuses)]
++```
++
+ The optional differential-evolution driver times preparation, seeded
+ search and traced replay as one run. Install SciPy for this example.
+ 
+ ```sh
+ python -m pip install scipy
++python validation/optimize_performance.py population_epidemiology --matrix
+ python validation/optimize_performance.py population_epidemiology --scores
+ python validation/optimize_performance.py population_epidemiology
+ ```
+@@ -125,6 +139,8 @@ python validation/optimize_performance.py population_epidemiology
+ The driver uses small local bounds and a short fixed search budget.
+ For a scientific result, use problem-specific bounds, an explicit
+ feasibility penalty or constraint policy, and a held-out evaluation.
++`examples/python/` has complete SciPy and fcmaes examples that score whole
++populations with `score_matrix`.
+ 
+ ## 4. Run and resume a local campaign
+ 
+@@ -149,26 +165,32 @@ cargo build --release --locked --bins --examples
+ target/release/population-epidemiology describe
+ target/release/population-epidemiology run models/request.json
+ target/release/examples/sweep models/example.json
++target/release/examples/matrix_scan models/example.json
+ target/release/examples/performance models/example.json serial
+ CRAFT_SCORES=1 target/release/examples/performance models/example.json serial
++CRAFT_MATRIX=1 target/release/examples/performance models/example.json serial
++target/release/examples/breakdown models/example.json
+ ```
+ 
+ The CLI reads a request file or standard input with `run -`. Exit code
+ 0 indicates complete rows, 1 indicates a rejected request and 2
+ indicates one or more unsuccessful rows in a well-formed request.
+ The benchmark prints elapsed seconds per prepared batch after warm-up.
+-Use `parallel` for four workers, `trace` for traced evaluations,
++`CRAFT_SCORES=1` selects the lean API and `CRAFT_MATRIX=1` the typed
++matrix API. Use `parallel` for four workers, `trace` for traced evaluations,
+ or `domain` and `domain2` for the package's supplemental cases.
+ With a previous benchmark executable built from the baseline and this
+ one, `validation/performance_pair.py BEFORE AFTER models/example.json serial`
+-checks output parity and times both. See the included performance log
++checks output parity and times both; `--before-scores`, `--after-scores`,
++`--before-matrix` and `--after-matrix` pick each side's API.
++`breakdown` prints where a call's time goes, as JSON. See the included performance log
+ and raw evidence for the exact workloads and comparison boundaries.
+ 
+ ## 6. Verify results
+ 
+ ```sh
+ cargo test --release --locked
+-cargo clippy --locked --all-targets --features python -- -D warnings
++PYO3_PYTHON=python3.12 cargo clippy --release --locked --all-targets --features python -- -D warnings
+ python validation/validate.py target/release/population-epidemiology
+ ```
+ 
+diff --git a/docs/user-manual.md b/docs/user-manual.md
+new file mode 100644
+index 0000000..45e92f3
+--- /dev/null
++++ b/docs/user-manual.md
+@@ -0,0 +1,809 @@
++# population-epidemiology user manual
++
++Version 0.3.0. This manual is for researchers and engineers who evaluate,
++fit or screen small stochastic population models with this package. It
++covers installation, the model and request formats, every status and
++error, budgets, the Python, Rust and command-line interfaces,
++reproducibility and performance. The [model card](model.md) states the
++equations and research scope, the [tutorial](tutorial.md) is a short
++walk-through, and the [architecture guide](architecture.md) describes the
++implementation and its measured performance.
++
++Every Python block in this manual runs as written, in order, in one
++Python session; `validation/release_checks.py` executes them for each
++release. Shell transcripts were copied from real runs of the 0.3.0 CLI.
++
++## Contents
++
++1. [Install](#1-install)
++2. [Concepts](#2-concepts)
++3. [Model reference](#3-model-reference)
++4. [Requests and results](#4-requests-and-results)
++5. [Statuses and errors](#5-statuses-and-errors)
++6. [Budgets](#6-budgets)
++7. [Python API](#7-python-api)
++8. [Campaigns](#8-campaigns)
++9. [Rust API](#9-rust-api)
++10. [Command line](#10-command-line)
++11. [Reproducibility and provenance](#11-reproducibility-and-provenance)
++12. [Performance](#12-performance)
++13. [Troubleshooting](#13-troubleshooting)
++14. [Example programs](#14-example-programs)
++
++## 1. Install
++
++### Wheel
++
++The release ZIP ships a wheel for Linux x86-64 with the CPython 3.10+
++stable ABI. It was tested with CPython 3.12. The package itself has no
++Python dependencies. NumPy is optional: `score_matrix` accepts NumPy
++arrays. The optimization examples also use SciPy and fcmaes.
++
++```sh
++python3 -m venv .venv
++. .venv/bin/activate
++python -m pip install --no-deps packages/population_epidemiology-0.3.0-cp310-abi3-manylinux_2_34_x86_64.whl
++python -m pip install numpy==2.3.5 scipy==1.17.0 fcmaes   # optional, for the examples
++```
++
++### From source
++
++Building needs Rust 1.88 or newer and maturin 1.9.6. The source
++distribution contains the pinned CRN-craft core under `vendor/`, so no
++other Rust source is fetched. Cargo still needs the locked crates.io
++dependencies from its registry or cache.
++
++```sh
++python -m pip install maturin==1.9.6
++tar xzf packages/population_epidemiology-0.3.0.tar.gz
++cd population_epidemiology-0.3.0
++maturin build --release --locked --out dist
++python -m pip install --no-deps dist/*.whl
++```
++
++### Command-line tool
++
++```sh
++cargo build --release --locked --bins --examples
++target/release/population-epidemiology describe
++```
++
++The crate cannot be published to crates.io as is, because CRN-craft is a
++path dependency that is not on crates.io. Use the source tree, the source
++distribution or the wheel.
++
++## 2. Concepts
++
++- **Model.** A JSON object with a `kind` of `sir`, `moran` or `calendar`
++  and that kind's fields. `Prepared(model)` validates it once and builds
++  everything that does not depend on a candidate: the SIR state space and
++  generator structure, the Moran transition stencil, or the calendar's
++  exact boundary probabilities.
++- **Candidate.** An identifier, a parameter vector and an optional
++  `trace` flag. SIR candidates have two parameters, `[beta, gamma]`.
++  Moran and calendar candidates have none, `[]`, because their model fixes
++  every rate.
++- **Batch.** Up to 4,096 candidates evaluated in one native call. Records
++  come back in input order, whatever the worker count.
++- **Record.** `id`, `status`, `steps`, `score`, `metrics` and `detail`.
++  Optimizers minimize `score`. It is set only when the status is
++  `complete`.
++- **Logical steps.** A deterministic work counter defined by the domain.
++  `max_steps` limits it per candidate. The count does not depend on
++  workers, timing or which internal kernel ran, so fixed-work results
++  replay exactly.
++- **Three result paths.** Full records (`batch`, `evaluate`) carry
++  metrics and optional traces. Lean records (`scores`) carry the same
++  keys with `metrics: null`. The matrix path (`score_matrix`) returns only
++  scores, statuses and steps, without JSON in either direction. All three
++  give identical statuses, steps and scores, bit for bit.
++
++```python
++from population_epidemiology import Prepared, load_example
++
++case = load_example()
++prepared = Prepared(case["model"])
++row = prepared.evaluate(case["parameters"])
++print(row["id"], row["status"], row["steps"], row["score"])
++lean = prepared.scores([{"id": "x", "parameters": case["parameters"]}])["records"][0]
++scores, statuses, steps = prepared.score_matrix([case["parameters"]])
++assert (lean["score"], lean["steps"]) == (row["score"], row["steps"]) == (scores[0], steps[0])
++assert lean["metrics"] is None and statuses == ["complete"]
++```
++
++## 3. Model reference
++
++All fields are required and unknown fields are rejected, so there are no
++defaults. Times are in the model's own time unit, and rates are per time
++unit. A model that violates a bound raises `ValueError` in Python
++(exit code 1 from the CLI) with the message shown for its kind.
++
++### 3.1 SIR (`"kind": "sir"`)
++
++A closed population of N = S + I + R individuals with stochastic counts.
++Infection S + I → 2I has propensity `beta * S * I / N`, and recovery
++I → R has propensity `gamma * I`. The vendored CRN-craft finite state
++projection (FSP) gives the exact count distribution at each sample time
++up to its documented series tail.
++
++| Field | Type | Bounds | Meaning |
++| --- | --- | --- | --- |
++| `susceptible` | integer | ≥ 0 | initial S |
++| `infected` | integer | ≥ 0 | initial I |
++| `recovered` | integer | ≥ 0 | initial R; N = S + I + R must be 1–30 |
++| `sample_times` | array of numbers | 2–64 entries, each in [0, 120], strictly increasing | observation times; CRN-craft requires the first to be 0 |
++| `observations` | array of numbers or `null` | same length as `sample_times`, each in [0, N] | observed infected counts; `null` masks a point |
++| `train_count` | integer | 1 ≤ `train_count` < number of sample times | the first `train_count` points train the fit, the rest are held out |
++| `tolerance` | number | [1e-13, 1e-5] | FSP Poisson-series tail tolerance |
++
++At least one of the first `train_count` observations must be non-null.
++Violations raise `invalid SIR population, time grid, observations or
++tolerance`. A model whose first sample time is not 0 passes this check,
++but CRN-craft rejects its documents, so every candidate is `infeasible`
++(section 5).
++
++**Candidate parameters:** `[beta, gamma]`, each in [0, 5] per time unit.
++
++**Score:** mean squared error between the expected infected count and the
++non-null training observations.
++
++**Metrics (full records):**
++
++| Key | Meaning |
++| --- | --- |
++| `infected_means` | expected infected count at each sample time |
++| `holdout_mse` | mean squared error over non-null held-out points, or `null` |
++| `error` | per sample time: `physical_leakage`, `series_tail_upper_bound`, `mass_defect`, `roundoff_mass_residual` |
++| `fsp_work` | CRN-craft's FSP work count |
++| `numerical_error_certified` | always `false`; the series tail is a bound, roundoff is not certified |
++| `crn_model_sha256`, `crn_run_sha256` | SHA-256 of the CRN-craft model and run documents for this rate binding |
++| `fsp` | traced candidates only: the full CRN-craft FSP result (states, per-time probabilities, moments and diagnostics); otherwise `null` |
++
++**Steps:** 2 per candidate, one before and one after the solve. With
++`max_steps: 1` an SIR candidate stops with `work_limit` before solving.
++
++```python
++sir = {"kind": "sir", "susceptible": 9, "infected": 2, "recovered": 1,
++       "sample_times": [0.0, 1.0, 2.0, 3.0, 5.0],
++       "observations": [2.0, 2.16, 2.14, None, 1.44],
++       "train_count": 3, "tolerance": 1e-11}
++fit = Prepared(sir)
++row = fit.evaluate([0.7, 0.4])
++m = row["metrics"]
++print(row["score"], m["holdout_mse"])
++print([round(x, 4) for x in m["infected_means"]])
++print(sorted(m["error"][1]), m["fsp_work"], m["fsp"])
++assert m["fsp"] is None and len(m["infected_means"]) == 5
++
++# A traced candidate adds CRN-craft's full FSP result.
++fsp = fit.evaluate([0.7, 0.4], trace=True)["metrics"]["fsp"]
++print(fsp["schema"], len(fsp["states"]), fsp["states"][:3], fsp["uniformization_rate"])
++snapshot = fsp["snapshots"][-1]
++print(snapshot["time"], round(sum(snapshot["probabilities"]), 12), snapshot["projected_first_moment"])
++```
++
++Masking every held-out point gives `holdout_mse: null`. Tightening the
++tolerance shrinks `series_tail_upper_bound` at the cost of more FSP work:
++
++```python
++no_holdout = Prepared(sir | {"observations": [2.0, 2.16, 2.14, None, None]})
++assert no_holdout.evaluate([0.7, 0.4])["metrics"]["holdout_mse"] is None
++for tolerance in (1e-5, 1e-13):
++    m = Prepared(sir | {"tolerance": tolerance}).evaluate([0.7, 0.4])["metrics"]
++    print(tolerance, max(e["series_tail_upper_bound"] for e in m["error"]), m["fsp_work"])
++```
++
++Rates of exactly 0 are allowed. They change which states are reachable,
++so the package hands them to the vendored CRN-craft solver instead of its
++prepared projection; the result is the same either way.
++
++```python
++for rates in ([0.0, 0.4], [0.7, 0.0], [5.0, 5.0]):
++    print(rates, fit.evaluate(rates)["status"], fit.evaluate(rates)["score"])
++```
++
++Models outside the bounds are rejected when you prepare them:
++
++```python
++for bad in (sir | {"susceptible": 40},              # N above 30
++            sir | {"tolerance": 1e-3},              # tolerance above 1e-5
++            sir | {"train_count": 5},               # no held-out position left
++            sir | {"sample_times": [0, 2, 1, 3, 5]},  # not increasing
++            sir | {"observations": [None, None, None, 1, 1]},  # no training point
++            sir | {"extra": 1}):                    # unknown field
++    try:
++        Prepared(bad)
++    except ValueError as error:
++        print(type(error).__name__, str(error)[:70])
++    else:
++        raise AssertionError(bad)
++```
++
++### 3.2 Neutral two-mutant Moran (`"kind": "moran"`)
++
++A population of N individuals of three types: wild type, mutant A and
++mutant B. Each discrete update draws a uniform parent and a uniform
++individual to replace, with replacement, so self-replacement and null
++updates are possible. No type has a fitness advantage. The package
++propagates the exact joint law over the (N+1)(N+2)/2 states (a, b).
++
++| Field | Type | Bounds | Meaning |
++| --- | --- | --- | --- |
++| `population` | integer | 2–32 | N |
++| `mutant_a` | integer | ≥ 0 | initial A count |
++| `mutant_b` | integer | ≥ 0, `mutant_a + mutant_b` ≤ N | initial B count |
++| `updates` | integer | 0–10,000 | number of update attempts |
++
++Violations raise `invalid Moran state or update count`.
++
++**Candidate parameters:** none, `[]`.
++
++**Score:** P(a = N) + P(b = N), the probability that one of the mutants
++has fixed.
++
++**Metrics:** `marginal_a` and `marginal_b` (length N+1, from extinction at
++index 0 to fixation at index N), `mass` (total probability, 1 up to
++roundoff), `updates`, and `joint`, which is `null` unless the candidate is
++traced and then holds `states` (the triangular (a, b) order) and
++`probabilities`.
++
++**Steps:** (N+1)(N+2)/2 × (updates + 1). Long runs with large populations
++need a larger `max_steps` than the default 1,000,000.
++
++```python
++moran = {"kind": "moran", "population": 8, "mutant_a": 2, "mutant_b": 1, "updates": 40}
++drift = Prepared(moran)
++row = drift.evaluate([], trace=True)
++m = row["metrics"]
++print(row["steps"], round(row["score"], 6), round(m["mass"], 12))
++print([round(x, 4) for x in m["marginal_a"]])
++print(len(m["joint"]["states"]), m["joint"]["states"][:4])
++assert row["steps"] == 45 * 41
++
++long = Prepared(moran | {"population": 32, "mutant_a": 8, "mutant_b": 8, "updates": 4000})
++print(long.evaluate([])["status"], long.evaluate([], max_steps=3_000_000)["status"])
++print(drift.evaluate([1.0])["status"], drift.evaluate([1.0])["detail"])
++```
++
++The neutral fixation probability of each mutant tends to its initial
++frequency:
++
++```python
++far = Prepared({"kind": "moran", "population": 6, "mutant_a": 2, "mutant_b": 1,
++                "updates": 2000}).evaluate([])["metrics"]
++print(round(far["marginal_a"][6], 9), round(far["marginal_b"][6], 9))
++assert abs(far["marginal_a"][6] - 2 / 6) < 1e-9 and abs(far["marginal_b"][6] - 1 / 6) < 1e-9
++```
++
++### 3.3 Two-state rate calendar (`"kind": "calendar"`)
++
++A two-state (off/on) continuous-time chain whose rates are constant within
++each segment and change at segment boundaries. The probability of being
++on is propagated exactly with `p += (p_eq - p) * (1 - exp(-(on + off) * duration))`,
++where `p_eq = on / (on + off)`. A segment whose two rates are both zero
++holds the probability.
++
++| Field | Type | Bounds | Meaning |
++| --- | --- | --- | --- |
++| `initial_on_probability` | number | [0, 1] | probability of the on state at time 0 |
++| `segments` | array of objects | 1–1,024 segments | in time order |
++| `segments[].duration` | number | [1e-10, 120] | segment length |
++| `segments[].on_rate` | number | [0, 1000] | off → on rate in this segment |
++| `segments[].off_rate` | number | [0, 1000] | on → off rate in this segment |
++
++Violations raise `invalid calendar probability, duration or rates`.
++
++**Candidate parameters:** none, `[]`. To change a rate, change the model.
++
++**Score:** the on-probability at the final boundary. Negate it in your
++objective if you want to maximize it.
++
++**Metrics:** `boundary_time_and_on_probability`, one `[time, probability]`
++pair per segment end.
++
++**Steps:** one per segment.
++
++```python
++import math
++
++calendar = Prepared({"kind": "calendar", "initial_on_probability": 0.0,
++                     "segments": [{"duration": 2, "on_rate": 1, "off_rate": 0},
++                                  {"duration": 1, "on_rate": 0, "off_rate": 2}]})
++row = calendar.evaluate([])
++print(row["steps"], row["metrics"]["boundary_time_and_on_probability"])
++assert abs(row["score"] - (1 - math.exp(-2)) * math.exp(-2)) < 1e-15
++held = Prepared({"kind": "calendar", "initial_on_probability": 0.25,
++                 "segments": [{"duration": 5, "on_rate": 0, "off_rate": 0}]})
++assert held.evaluate([])["score"] == 0.25
++print(calendar.evaluate([0.5])["detail"])
++```
++
++## 4. Requests and results
++
++### Request (CLI and `population_epidemiology::run`)
++
++```json
++{
++  "schema": "population-epidemiology.request/0.1",
++  "model": {"kind": "calendar", "initial_on_probability": 0,
++            "segments": [{"duration": 1, "on_rate": 0.3, "off_rate": 0}]},
++  "candidates": [{"id": "a", "parameters": [], "trace": false}],
++  "budget": {"workers": 1, "max_steps": 1000000}
++}
++```
++
++| Field | Type | Rules |
++| --- | --- | --- |
++| `schema` | string | exactly `population-epidemiology.request/0.1` |
++| `model` | object | section 3; its exact bytes are hashed into `model_sha256` |
++| `candidates` | array | 1–4,096 entries |
++| `candidates[].id` | string | 1–128 bytes, unique within the batch |
++| `candidates[].parameters` | array of numbers | at most 64 values |
++| `candidates[].trace` | boolean | optional, default `false`; at most 16 traced per batch |
++| `budget` | object | optional; section 6 |
++
++Python's `batch` and `scores` take the `candidates` list and the budget as
++keyword arguments; `Prepared` holds the model.
++
++### Result
++
++| Field | Meaning |
++| --- | --- |
++| `model_sha256` | SHA-256 of the model bytes the evaluator was prepared with |
++| `records` | one record per candidate, in input order |
++| `schema` | `population-epidemiology.result/0.1` |
++| `version` | package version, `0.3.0` |
++| `records[].id` | the candidate's identifier |
++| `records[].status` | section 5 |
++| `records[].steps` | logical steps charged |
++| `records[].score` | number when complete, otherwise `null` |
++| `records[].metrics` | kind-specific object in full records when complete; `null` in lean records and for failures |
++| `records[].detail` | `null` when complete; otherwise a reason |
++
++The request and result schema tags stay at 0.1 in 0.3.0; no field
++changed. The matrix API is not part of the JSON schema.
++
++```python
++import hashlib
++import json
++
++result = prepared.batch([{"id": "fit", "parameters": [0.7, 0.4]},
++                         {"id": "slow", "parameters": [0.2, 0.1]}], workers=2)
++print(sorted(result), result["schema"], result["version"])
++print([(r["id"], r["status"], r["steps"]) for r in result["records"]])
++print(sorted(result["records"][0]))
++```
++
++## 5. Statuses and errors
++
++### Record statuses
++
++| Status | Meaning | `steps` | Typical `detail` |
++| --- | --- | --- | --- |
++| `complete` | evaluated; `score` is finite | logical steps used | `null` |
++| `invalid` | the candidate does not fit the model | steps used before the check (usually 0) | `expected beta and gamma per time unit`, `rates must be in [0,5]`, `neutral Moran has no candidate parameters`, `calendar rates come from the model`, `nonfinite objective` |
++| `infeasible` | CRN-craft rejected or could not finish the FSP | 2 for SIR | the CRN-craft diagnostics (warnings and the error) as a JSON array string |
++| `work_limit` | `max_steps` reached | equal to `max_steps` | `candidate step budget reached` |
++| `wall_limit` | the batch deadline (`wall_ms`) passed | steps used so far | `batch deadline reached` |
++| `cancelled` | the cancel file existed at a step check | steps used so far | `cancel file exists` |
++
++Only `complete` rows have a score. A batch is still well formed when some
++rows fail. The CLI then exits with code 2 and prints every record.
++
++```python
++import tempfile
++from pathlib import Path
++
++statuses = {}
++statuses["complete"] = prepared.evaluate([0.7, 0.4])
++statuses["invalid"] = prepared.evaluate([7.0, 0.4])
++statuses["work_limit"] = prepared.evaluate([0.7, 0.4], max_steps=1)
++late_start = Prepared(sir | {"sample_times": [1.0, 2.0, 3.0, 4.0, 5.0]})
++statuses["infeasible"] = late_start.evaluate([0.7, 0.4])
++slow = Prepared({"kind": "moran", "population": 32, "mutant_a": 8, "mutant_b": 8,
++                 "updates": 10_000})
++statuses["wall_limit"] = slow.evaluate([], wall_ms=1, max_steps=10_000_000)
++with tempfile.TemporaryDirectory() as folder:
++    flag = Path(folder) / "stop"
++    flag.touch()
++    statuses["cancelled"] = prepared.evaluate([0.7, 0.4], cancel_file=str(flag))
++for name, row in statuses.items():
++    assert row["status"] == name, row
++    print(f"{name:11s} steps={row['steps']:<6} detail={str(row['detail'])[:60]}")
++diagnostics = json.loads(statuses["infeasible"]["detail"])
++error = next(d for d in diagnostics if d["severity"] == "error")
++print(error["code"], error["path"], error["message"])
++```
++
++### Batch errors
++
++These reject the whole call: `ValueError` in Python, exit code 1 and
++`{"status": "rejected", "detail": ...}` on standard error from the CLI.
++
++| Message | Cause |
++| --- | --- |
++| `invalid budget or batch size` | workers outside 1–64, `max_steps` outside 1–100,000,000, `wall_ms` of 0 or above 86,400,000, or 0 or more than 4,096 candidates |
++| `invalid or duplicate candidate id, or parameter vector exceeds limit` | empty, too long or repeated ID, or more than 64 parameters |
++| `at most 16 traced candidates per batch` | more than 16 `trace: true` |
++| `scores mode accepts untraced candidates only` | `scores` with a traced candidate |
++| `unsupported request schema` | CLI request with another `schema` value |
++| `request exceeds 16 MiB` | CLI input above 16 MiB |
++| `matrix rows must be in 1..=4096` | `score_matrix` with no rows or too many |
++| `parameter count is not a multiple of the row count` | Rust `score_matrix` with a ragged flat buffer |
++| `parameter vector exceeds limit` | `score_matrix` rows longer than 64 |
++| `ragged parameter rows` | Python `score_matrix` rows of different lengths |
++| `score_matrix expects a 2-D array of parameter rows` | a NumPy array that is not 2-D |
++| serde messages such as `unknown field ...` or `missing field ...` | malformed model, candidate or budget JSON |
++| `invalid SIR ...`, `invalid Moran ...`, `invalid calendar ...` | model bounds, section 3 |
++
++```python
++def rejected(call):
++    try:
++        call()
++    except ValueError as error:
++        return str(error)
++    raise AssertionError("accepted")
++
++print(rejected(lambda: prepared.batch([], workers=1)))
++print(rejected(lambda: prepared.batch([{"id": "a", "parameters": []}] * 2)))
++print(rejected(lambda: prepared.batch([{"id": "a", "parameters": []}], workers=65)))
++print(rejected(lambda: prepared.scores([{"id": "a", "parameters": [0.7, 0.4], "trace": True}])))
++print(rejected(lambda: prepared.score_matrix([[0.7, 0.4], [0.7]])))
++print(rejected(lambda: prepared.batch([{"id": "a", "parameters": [], "extra": 1}])))
++print(rejected(lambda: prepared.batch([{"id": "a", "parameters": []}], unknown=1)))
++```
++
++## 6. Budgets
++
++Budgets apply per batch in `batch`, `scores`, `score_matrix`, `evaluate`
++and the CLI's `budget` object. Every field is optional.
++
++| Field | Type | Default | Bounds | Effect |
++| --- | --- | --- | --- | --- |
++| `workers` | integer | 1 | 1–64 | number of scoped worker threads; records stay in input order and results do not depend on it |
++| `max_steps` | integer | 1,000,000 | 1–100,000,000 | logical steps per candidate; reaching it gives `work_limit` |
++| `wall_ms` | integer | none | 1–86,400,000 | batch deadline in milliseconds; checked at each logical step, giving `wall_limit` |
++| `cancel_file` | string path | none | any path | if the file exists at a step check, the candidate stops with `cancelled` |
++
++Deadlines and cancellation are cooperative: they are checked at logical
++steps, so a running step finishes first. SIR's FSP solve also polls them.
++A batch with `wall_ms` or `cancel_file` is *monitored*. Monitored SIR
++candidates run through the vendored CRN-craft solver, which polls the
++deadline and cancel file inside the solve; this is about ten times slower
++per candidate than the prepared projection (section 12) but gives the
++same results. Moran and calendar candidates check every logical step when
++monitored. Unmonitored work can only stop at `max_steps`, so its step
++count is charged in bulk.
++
++```python
++cases = [{"id": f"c{i}", "parameters": [0.6 + 0.02 * i, 0.4]} for i in range(8)]
++one = prepared.scores(cases, workers=1)["records"]
++four = prepared.scores(cases, workers=4)["records"]
++assert one == four
++with tempfile.TemporaryDirectory() as folder:
++    absent = str(Path(folder) / "not-created")
++    monitored = prepared.scores(cases, cancel_file=absent, wall_ms=60_000)["records"]
++assert monitored == one
++limited = Prepared(moran).scores([{"id": "m", "parameters": []}], max_steps=100)["records"][0]
++print(limited["status"], limited["steps"])
++```
++
++## 7. Python API
++
++```python
++from population_epidemiology import Prepared, load_example
++```
++
++| Call | Returns |
++| --- | --- |
++| `Prepared(model)` | a prepared evaluator; raises `ValueError` for an invalid model |
++| `Prepared.batch(candidates, **budget)` | the result dictionary with full records |
++| `Prepared.scores(candidates, **budget)` | the result dictionary with `metrics: null`; rejects traced candidates |
++| `Prepared.score_matrix(rows, **budget)` | `(scores, statuses, steps)`, three lists in row order |
++| `Prepared.evaluate(parameters, *, trace=False, **budget)` | one full record with ID `"one"` |
++| `load_example()` | `{"model": ..., "parameters": ...}`, the packaged SIR fixture and its generating rates |
++
++The model and candidates are encoded to JSON with sorted keys and finite
++numbers (`allow_nan=False`), so NaN or infinity in `batch` or `scores`
++raises `ValueError` before native code runs. Each call crosses into native
++code once and releases the GIL during evaluation, so other Python threads
++keep running.
++
++### `score_matrix`
++
++`rows` is a list of equal-length lists or a 2-D NumPy array, one row per
++candidate. Rows are numbered by position, so there are no IDs and no
++duplicate check. A score is `nan` unless the status is `complete`.
++Statuses, steps and scores equal what `scores` reports for the same
++vectors, bit for bit. Values JSON cannot carry, such as NaN, are allowed
++and classified per row.
++
++```python
++import numpy as np
++
++rows = np.array([[0.7, 0.4], [0.9, 0.5], [6.0, 0.4]])
++scores, statuses, steps = prepared.score_matrix(rows, workers=2)
++print([round(s, 6) for s in scores[:2]], statuses, steps)
++assert np.isnan(scores[2])
++listed = prepared.scores([{"id": str(i), "parameters": r} for i, r in enumerate(rows.tolist())])
++assert [r["status"] for r in listed["records"]] == statuses
++assert listed["records"][0]["score"] == scores[0]
++print(prepared.score_matrix([[float("nan"), 0.4]])[1])
++# Dimension-0 rows for models without candidate parameters.
++print(Prepared(moran).score_matrix(np.zeros((3, 0)))[0])
++```
++
++### Choosing an API
++
++```python
++from time import perf_counter
++
++grid = [[b, g] for b in np.linspace(0.4, 1.0, 20).tolist() for g in np.linspace(0.2, 0.6, 20).tolist()]
++t0 = perf_counter()
++matrix = prepared.score_matrix(grid)
++t1 = perf_counter()
++lean = prepared.scores([{"id": str(i), "parameters": r} for i, r in enumerate(grid)])
++t2 = perf_counter()
++full = prepared.batch([{"id": str(i), "parameters": r} for i, r in enumerate(grid)])
++t3 = perf_counter()
++print(f"400 candidates: matrix {1e3 * (t1 - t0):.1f} ms, lean {1e3 * (t2 - t1):.1f} ms, "
++      f"full {1e3 * (t3 - t2):.1f} ms")
++best = int(np.nanargmin(matrix[0]))
++print("best", grid[best], prepared.evaluate(grid[best])["metrics"]["holdout_mse"])
++```
++
++Use `score_matrix` inside optimizers, `scores` when you need IDs or
++`detail` strings for screening, and `batch`/`evaluate` with `trace=True`
++to inspect a chosen candidate.
++
++### An optimizer objective
++
++The usual pattern maps non-complete rows to a penalty. With SciPy's
++vectorized differential evolution, one `score_matrix` call scores a whole
++generation:
++
++```python
++from scipy.optimize import differential_evolution
++
++def objective(x):
++    scores, statuses, _ = prepared.score_matrix(np.atleast_2d(x.T))
++    return np.where(np.array(statuses) == "complete", scores, 1e6)
++
++found = differential_evolution(objective, [(0.0, 5.0), (0.0, 5.0)], seed=3, popsize=8,
++                               maxiter=40, polish=False, vectorized=True,
++                               updating="deferred", tol=0)
++print(np.round(found.x, 3), f"{found.fun:.2e}")
++assert np.allclose(found.x, [0.7, 0.4], atol=0.05)
++```
++
++## 8. Campaigns
++
++`population_epidemiology.campaign.run(database, scenarios, candidates, *,
++workers=1, chunk_size=16, **budget)` evaluates every candidate against
++every scenario model and returns rows in manifest order. Each row holds
++`scenario`, `key`, `build_sha256`, `model_sha256` and the full `record`.
++Results are committed to a SQLite database chunk by chunk:
++
++- `results` keeps complete, invalid and infeasible records. They depend
++  only on the build, scenario, model, candidate and work settings, which
++  form the SHA-256 cache key.
++- `attempts` is an append-only journal of every evaluated record,
++  including cancelled and time-limited ones, which are retried on the next
++  run.
++- `build_sha256` hashes the installed native extension, so a new build
++  re-evaluates instead of reusing old records.
++- `cancel_file` is a runtime control and not part of the key. `chunk_size`
++  must be 1–256, and scenario and candidate IDs must be unique.
++
++```python
++import sqlite3
++
++from population_epidemiology import campaign
++
++scenarios = [{"id": "baseline", "model": case["model"]},
++             {"id": "longer", "model": case["model"] | {"tolerance": 1e-13}}]
++trial = [{"id": f"r{i}", "parameters": [0.5 + 0.1 * i, 0.4]} for i in range(5)]
++with tempfile.TemporaryDirectory() as folder:
++    db = Path(folder) / "campaign.sqlite"
++    flag = Path(folder) / "stop"
++    flag.touch()
++    stopped = campaign.run(db, scenarios, trial, workers=2, cancel_file=str(flag))
++    print({r["record"]["status"] for r in stopped})
++    flag.unlink()
++    first = campaign.run(db, scenarios, trial, workers=2)
++    again = campaign.run(db, scenarios, trial, workers=1)
++    assert first == again
++    with sqlite3.connect(db) as conn:
++        print(conn.execute("SELECT count(*) FROM results").fetchone()[0],
++              conn.execute("SELECT count(*) FROM attempts").fetchone()[0])
++print(first[0]["scenario"], first[0]["record"]["id"], first[0]["record"]["status"])
++```
++
++The included manifest runner evaluates `models/campaign.json`:
++
++```sh
++python validation/run_campaign.py population_epidemiology models/campaign.json campaign.sqlite > first.json
++python validation/run_campaign.py population_epidemiology models/campaign.json campaign.sqlite > replay.json
++cmp first.json replay.json
++```
++
++## 9. Rust API
++
++The library crate `population_epidemiology` exposes:
++
++| Item | Purpose |
++| --- | --- |
++| `Prepared::new(model_json: &str) -> Result<Prepared, String>` | validate and prepare a model |
++| `Prepared::evaluate_json(candidates, budget) -> Result<String, String>` | full records as the result JSON |
++| `Prepared::scores_json(candidates, budget) -> Result<String, String>` | lean records, untraced candidates only |
++| `Prepared::score_matrix(rows, parameters, budget) -> Result<Vec<MatrixScore>, String>` | typed scores for row-major parameters; `parameters.len() / rows` values per row, dimension 0 allowed |
++| `Prepared::model_sha256() -> &str` | SHA-256 of the prepared model bytes |
++| `MatrixScore { status: &'static str, steps: u64, score: Option<f64> }` | one matrix row; `score` is `Some` only for `"complete"` |
++| `run(request_json) -> Result<serde_json::Value, String>` | the CLI's request path |
++| `capabilities() -> serde_json::Value` | the `describe` output |
++| `Candidate` | the deserializable candidate type (`id`, `parameters`, `trace`) |
++
++Budgets are passed as JSON strings, for example `r#"{"workers":2}"#`.
++
++```rust
++use population_epidemiology::Prepared;
++
++let prepared = Prepared::new(&model_json)?;
++// Two rows of (beta, gamma).
++let rows = prepared.score_matrix(2, &[0.7, 0.4, 0.9, 0.5], r#"{"workers":2}"#)?;
++for row in &rows {
++    println!("{} {} {:?}", row.status, row.steps, row.score);
++}
++```
++
++[`examples/matrix_scan.rs`](../examples/matrix_scan.rs) is a complete
++program: `cargo run --release --locked --example matrix_scan -- models/example.json`.
++`examples/sweep.rs` evaluates five scaled vectors with two workers.
++`examples/performance.rs` and `examples/breakdown.rs` are the benchmark
++programs described in section 12.
++
++## 10. Command line
++
++```text
++population-epidemiology describe
++population-epidemiology run FILE
++population-epidemiology run -        # read the request from standard input
++```
++
++| Exit code | Meaning |
++| --- | --- |
++| 0 | every record is `complete` |
++| 1 | the request was rejected; one JSON line on standard error |
++| 2 | the request was valid but at least one record is not `complete`; all records are printed |
++
++```sh
++$ target/release/population-epidemiology describe
++{"batch":true,"models":["sir_via_crn_fsp","finite_neutral_two_mutant_moran","exact_two_state_rate_calendar"],"schema":"population-epidemiology.capabilities/0.1","version":"0.3.0","worker_limit":64}
++```
++
++```sh
++$ echo '{"schema":"population-epidemiology.request/0.1","model":{"kind":"calendar","initial_on_probability":0,"segments":[{"duration":1,"on_rate":0.3,"off_rate":0},{"duration":2,"on_rate":0,"off_rate":0.4}]},"candidates":[{"id":"a","parameters":[]}]}' | target/release/population-epidemiology run -
++{"model_sha256":"201430af95cef942c385efdb17403f88a39a9392635e819ddcfce4bfb40cbcab","records":[{"detail":null,"id":"a","metrics":{"boundary_time_and_on_probability":[[1.0,0.2591817793182821],[3.0,0.11645788041914201]]},"score":0.11645788041914201,"status":"complete","steps":2}],"schema":"population-epidemiology.result/0.1","version":"0.3.0"}
++$ echo $?
++0
++```
++
++A valid request with an invalid row exits with 2:
++
++```sh
++$ echo '{"schema":"population-epidemiology.request/0.1","model":{"kind":"moran","population":3,"mutant_a":1,"mutant_b":1,"updates":2},"candidates":[{"id":"ok","parameters":[]},{"id":"bad","parameters":[0.5]}],"budget":{"max_steps":100}}' | target/release/population-epidemiology run -
++{"model_sha256":"6583f5c626c0b76d99c9c525b689ddc2ad546216a3879b42f340268ab6016b67","records":[{"detail":null,"id":"ok","metrics":{"joint":null,"marginal_a":[0.345679012345679,0.35802469135802467,0.24691358024691357,0.04938271604938271],"marginal_b":[0.345679012345679,0.35802469135802467,0.24691358024691357,0.04938271604938271],"mass":0.9999999999999999,"updates":2},"score":0.09876543209876543,"status":"complete","steps":30},{"detail":"neutral Moran has no candidate parameters","id":"bad","metrics":null,"score":null,"status":"invalid","steps":0}],"schema":"population-epidemiology.result/0.1","version":"0.3.0"}
++$ echo $?
++2
++```
++
++A rejected request exits with 1:
++
++```sh
++$ echo '{"schema":"population-epidemiology.request/9","model":{"kind":"moran","population":3,"mutant_a":1,"mutant_b":1,"updates":2},"candidates":[{"id":"a","parameters":[]}]}' | target/release/population-epidemiology run -
++{"detail":"unsupported request schema","status":"rejected"}
++$ echo $?
++1
++$ target/release/population-epidemiology
++{"detail":"usage: population-epidemiology describe | run FILE (use - for stdin)","status":"rejected"}
++```
++
++`models/request.json` is a traced SIR request: `run models/request.json`
++exits with 0 and prints one record that includes the full FSP result. The
++CLI prints its JSON with sorted keys.
++
++## 11. Reproducibility and provenance
++
++- `model_sha256` is the SHA-256 of the exact model bytes. The Python
++  wrapper encodes with `json.dumps(model, sort_keys=True,
++  separators=(",", ":"), allow_nan=False)`, so the same dictionary gives
++  the same hash. The CLI hashes the model text as written in the
++  request, so whitespace or key order there changes the hash.
++- SIR full records add `crn_model_sha256` and `crn_run_sha256`, the
++  hashes of the CRN-craft documents for each rate binding. They are the
++  same whether the prepared projection or the vendored solver ran.
++- Results do not depend on the worker count or on which SIR kernel ran.
++  Fixed-work replays (no deadline) are deterministic for a given build.
++- `version` in every result and `build_sha256` in campaign rows identify
++  the code that produced a record.
++- The vendored CRN-craft core is pinned; see the [source notes](sources.md).
++
++```python
++encoded = json.dumps(case["model"], sort_keys=True, separators=(",", ":"), allow_nan=False)
++digest = hashlib.sha256(encoded.encode()).hexdigest()
++assert digest == prepared.batch([{"id": "h", "parameters": [0.7, 0.4]}])["model_sha256"]
++rows = [{"id": str(i), "parameters": [0.5 + 0.05 * i, 0.4]} for i in range(6)]
++assert prepared.batch(rows, workers=1) == prepared.batch(rows, workers=3)
++print(digest[:16], prepared.evaluate([0.7, 0.4])["metrics"]["crn_model_sha256"][:16])
++```
++
++## 12. Performance
++
++Measured on the 0.3.0 release host: 2 vCPUs (Intel Xeon Processor @
++2.10GHz, KVM), Rust 1.97 and CPython 3.12. Numbers come from
++`examples/breakdown.rs`, saved as
++`evidence/performance-0.3.0/breakdown.json`, as medians of 41 alternating
++rounds. The [architecture guide](architecture.md#performance) has the
++full 0.2.0 to 0.3.0 comparison.
++
++| One call | Matrix | Lean | Full |
++| --- | ---: | ---: | ---: |
++| 1 SIR candidate (12 people, 5 times) | 14.7 µs | 15.5 µs | 28.1 µs |
++| 96 SIR candidates, 1 worker, per candidate | 11.2 µs | 11.4 µs | 21.7 µs |
++| 48 Moran cases (N = 18, 65 updates), per case | 47.5 µs | 47.9 µs | 51.5 µs |
++| 48 calendar cases (350 segments), per case | 0.02 µs | 0.27 µs | 0.81 µs |
++
++- **Use `score_matrix` in optimization loops.** It skips candidate and
++  record JSON in both directions. From Python it also skips `json.dumps`
++  and `json.loads`, which cost more than the SIR evaluation itself for
++  small models.
++- **Full records cost about twice as much for SIR.** Most of the extra
++  time goes to building and hashing the CRN-craft provenance documents and
++  serializing the diagnostics. Request them for replay and inspection,
++  not inside a search.
++- **Traces are larger still.** A traced SIR record took 46.5 µs with the
++  prepared projection.
++- **Avoid monitored budgets in tight SIR loops.** A `wall_ms` or
++  `cancel_file` budget routes SIR through the vendored solver: 154.6 µs
++  instead of 16.1 µs for one lean candidate. Moran and calendar are not
++  affected this way.
++- **Workers.** On this 2-vCPU host the 96-candidate SIR batch took
++  2.75 ms with one worker, 1.71 ms with two and 1.90 ms with four (full
++  records). Use at most one worker per available CPU, batch at least a
++  few dozen candidates per call, and keep `workers=1` for single
++  candidates, which always run inline.
++- **Large invalid batches are JSON bound.** Decoding 1,024 candidates with
++  63 numbers each took 1.14 ms of a 1.46 ms call. The matrix path scored
++  the same rows in 0.02 ms.
++
++## 13. Troubleshooting
++
++| Symptom | Cause and fix |
++| --- | --- |
++| `ValueError: invalid SIR population, time grid, observations or tolerance` | check N ≤ 30, 2–64 increasing times in [0, 120], one observation per time within [0, N], `train_count` between 1 and the number of times minus 1 with a training observation, and tolerance in [1e-13, 1e-5] |
++| every SIR row is `infeasible` | the first sample time must be 0; the `detail` string holds CRN-craft's diagnostics, including the `CRN-E020` error for the save grid |
++| `work_limit` on a large Moran model | steps are (N+1)(N+2)/2 × (updates + 1); raise `max_steps` (up to 100,000,000) |
++| `invalid` with `expected beta and gamma per time unit` | SIR candidates need exactly two parameters |
++| `invalid` with `neutral Moran has no candidate parameters` or `calendar rates come from the model` | pass `[]`; change the model to change rates |
++| `ValueError: Out of range float values are not JSON compliant` | a NaN or infinity in `batch`, `scores` or `evaluate`; filter it or use `score_matrix`, which classifies it as `invalid` |
++| `ValueError: ragged parameter rows` | every `score_matrix` row needs the same length |
++| `ValueError: at most 16 traced candidates per batch` | split traced replays into several batches |
++| a campaign re-evaluates after reinstalling | the build hash changed; that is intended |
++| the wheel does not install | the wheel targets Linux x86-64 and CPython 3.10+; build from the source distribution |
++| timings vary between runs | use medians of repeated measurements and keep workers ≤ CPUs; shared hosts are noisy |
++
++## 14. Example programs
++
++[`examples/python/`](../examples/python/README.md) holds application and
++optimization scripts. Their recorded outputs are in
++`examples/python/outputs/`.
++
++| Script | What it shows |
++| --- | --- |
++| `sir_rate_landscape.py` | a 41 x 41 rate grid in one `score_matrix` call, the R0 valley and a full replay |
++| `sir_design_comparison.py` | identifiability of beta, gamma and R0 under three sampling designs, sensitivities and tolerance diagnostics |
++| `moran_fixation_study.py` | neutral fixation for populations 4 to 32, the joint law and step budgets |
++| `calendar_schedule_comparison.py` | on-rate schedules with equal exposure, a closed-form check and per-segment sensitivity |
++| `optimize_scipy_de.py` | SciPy vectorized differential evolution through `score_matrix`, Nelder-Mead polish and traced replay |
++| `optimize_fcmaes_cmaes.py` | fcmaes CMA-ES ask/tell with one `score_matrix` call per generation on a noisy 20-person outbreak |
++| `optimize_fcmaes_minimize.py` | fcmaes `bitecpp.minimize` and `cmaescpp.minimize` with a graded failure penalty |
+diff --git a/evidence/performance-0.3.0/breakdown.json b/evidence/performance-0.3.0/breakdown.json
+new file mode 100644
+index 0000000..7272c94
+--- /dev/null
++++ b/evidence/performance-0.3.0/breakdown.json
+@@ -0,0 +1,112 @@
++{
++  "available_parallelism": 2,
++  "sir_96_worker_scaling": [
++    {
++      "full_us": 2754.38625,
++      "lean_us": 1607.5672499999998,
++      "matrix_us": 1459.216,
++      "workers": 1
++    },
++    {
++      "full_us": 1714.362,
++      "lean_us": 946.34825,
++      "matrix_us": 986.6194999999999,
++      "workers": 2
++    },
++    {
++      "full_us": 1904.803,
++      "lean_us": 1049.93975,
++      "matrix_us": 955.481,
++      "workers": 4
++    }
++  ],
++  "sir_one_candidate": {
++    "prepared_lean_us": 16.136020000000002,
++    "prepared_traced_full_us": 46.500789999999995,
++    "vendored_solver_lean_us": 154.61738,
++    "vendored_solver_traced_full_us": 173.32515
++  },
++  "unit": "median microseconds per call",
++  "workloads": [
++    {
++      "candidates": 1,
++      "decode_us": 0.14567,
++      "encode_and_checks_us": 0.6709549999999984,
++      "full_metrics_us": 12.516850000000003,
++      "full_output_bytes": 1374,
++      "full_us": 28.046310000000002,
++      "full_us_per_candidate": 28.046310000000002,
++      "lean_json_boundary_us": 0.8166249999999984,
++      "lean_us": 15.529459999999998,
++      "lean_us_per_candidate": 15.529459999999998,
++      "matrix_us": 14.712835,
++      "matrix_us_per_candidate": 14.712835,
++      "prepare_us": 62.06984500000001,
++      "workload": "one (SIR)"
++    },
++    {
++      "candidates": 96,
++      "decode_us": 13.164,
++      "encode_and_checks_us": 7.660000000000069,
++      "full_metrics_us": 987.2274999999997,
++      "full_output_bytes": 117012,
++      "full_us": 2079.47675,
++      "full_us_per_candidate": 21.661216145833333,
++      "lean_json_boundary_us": 20.82400000000007,
++      "lean_us": 1092.24925,
++      "lean_us_per_candidate": 11.377596354166668,
++      "matrix_us": 1071.42525,
++      "matrix_us_per_candidate": 11.1606796875,
++      "prepare_us": 48.1568,
++      "workload": "serial (SIR)"
++    },
++    {
++      "candidates": 1024,
++      "decode_us": 1141.91675,
++      "encode_and_checks_us": 292.59124999999995,
++      "full_metrics_us": 7.763750000000073,
++      "full_output_bytes": 133279,
++      "full_us": 1466.10625,
++      "full_us_per_candidate": 1.431744384765625,
++      "lean_json_boundary_us": 1434.508,
++      "lean_us": 1458.3425,
++      "lean_us_per_candidate": 1.42416259765625,
++      "matrix_us": 23.834500000000002,
++      "matrix_us_per_candidate": 0.023275878906250002,
++      "prepare_us": 51.034800000000004,
++      "workload": "invalid (SIR, 63 values)"
++    },
++    {
++      "candidates": 48,
++      "decode_us": 5.396,
++      "encode_and_checks_us": 16.600750000000247,
++      "full_metrics_us": 172.66249999999945,
++      "full_output_bytes": 46815,
++      "full_us": 2473.0429999999997,
++      "full_us_per_candidate": 51.52172916666666,
++      "lean_json_boundary_us": 21.996750000000247,
++      "lean_us": 2300.3805,
++      "lean_us_per_candidate": 47.92459375000001,
++      "matrix_us": 2278.38375,
++      "matrix_us_per_candidate": 47.466328125,
++      "prepare_us": 15.177600000000002,
++      "workload": "domain (Moran)"
++    },
++    {
++      "candidates": 48,
++      "decode_us": 4.349200000000001,
++      "encode_and_checks_us": 7.914149999999997,
++      "full_metrics_us": 25.98995,
++      "full_output_bytes": 449679,
++      "full_us": 39.004075,
++      "full_us_per_candidate": 0.8125848958333334,
++      "lean_json_boundary_us": 12.263349999999997,
++      "lean_us": 13.014124999999998,
++      "lean_us_per_candidate": 0.27112760416666665,
++      "matrix_us": 0.7507750000000001,
++      "matrix_us_per_candidate": 0.015641145833333335,
++      "prepare_us": 152.538375,
++      "workload": "domain2 (calendar)"
++    }
++  ]
++}
+diff --git a/evidence/performance-0.3.0/cumulative/domain.json b/evidence/performance-0.3.0/cumulative/domain.json
+new file mode 100644
+index 0000000..51d689a
+--- /dev/null
++++ b/evidence/performance-0.3.0/cumulative/domain.json
+@@ -0,0 +1,36 @@
++{
++  "workload": "domain",
++  "before_mode": "full",
++  "after_mode": "full",
++  "before_seconds": [
++    0.004603063,
++    0.0033332128,
++    0.0032202812,
++    0.0041881464,
++    0.0040743914,
++    0.0039458476,
++    0.0042289632,
++    0.0040417276,
++    0.0040875469999999995,
++    0.0042035428,
++    0.004285454
++  ],
++  "after_seconds": [
++    0.0024744263999999998,
++    0.0019137910000000002,
++    0.0019483014,
++    0.002299468,
++    0.0024683008,
++    0.0024265930000000003,
++    0.0026510616,
++    0.0025387094,
++    0.002458886,
++    0.0025181124,
++    0.0025532593999999997
++  ],
++  "medians_seconds": [
++    0.0040875469999999995,
++    0.0024683008
++  ],
++  "speedup": 1.6560165600562133
++}
+diff --git a/evidence/performance-0.3.0/cumulative/domain2.json b/evidence/performance-0.3.0/cumulative/domain2.json
+new file mode 100644
+index 0000000..ff47e91
+--- /dev/null
++++ b/evidence/performance-0.3.0/cumulative/domain2.json
+@@ -0,0 +1,36 @@
++{
++  "workload": "domain2",
++  "before_mode": "full",
++  "after_mode": "full",
++  "before_seconds": [
++    0.0022702727999999997,
++    0.0023570994000000002,
++    0.0023803088,
++    0.0033127086,
++    0.0024127712,
++    0.0027364926000000003,
++    0.0027101802,
++    0.0035716096,
++    0.0034536313999999997,
++    0.0023773504,
++    0.0029370332
++  ],
++  "after_seconds": [
++    5.1258800000000005e-05,
++    5.28892e-05,
++    0.0001266418,
++    5.8288800000000003e-05,
++    4.07312e-05,
++    6.116039999999999e-05,
++    3.79054e-05,
++    3.71094e-05,
++    4.03522e-05,
++    4.11368e-05,
++    6.48698e-05
++  ],
++  "medians_seconds": [
++    0.0027101802,
++    5.1258800000000005e-05
++  ],
++  "speedup": 52.872486285281745
++}
+diff --git a/evidence/performance-0.3.0/cumulative/invalid-repeat-1.json b/evidence/performance-0.3.0/cumulative/invalid-repeat-1.json
+new file mode 100644
+index 0000000..8e17869
+--- /dev/null
++++ b/evidence/performance-0.3.0/cumulative/invalid-repeat-1.json
+@@ -0,0 +1,36 @@
++{
++  "workload": "invalid",
++  "before_mode": "full",
++  "after_mode": "full",
++  "before_seconds": [
++    0.0023623711666666664,
++    0.0015390028333333334,
++    0.0014012558333333335,
++    0.0013075301666666667,
++    0.0013039498333333333,
++    0.0013750555,
++    0.0020361710000000002,
++    0.0014599618333333332,
++    0.0023240556666666665,
++    0.0013942996666666669,
++    0.0013589765
++  ],
++  "after_seconds": [
++    0.0013768991666666666,
++    0.0013980408333333335,
++    0.001354137,
++    0.0013733469999999998,
++    0.0013218551666666666,
++    0.0012975845,
++    0.001745507,
++    0.0013727303333333333,
++    0.0016665631666666666,
++    0.0013765095,
++    0.0014179558333333334
++  ],
++  "medians_seconds": [
++    0.0014012558333333335,
++    0.0013765095
++  ],
++  "speedup": 1.0179775972002616
++}
+diff --git a/evidence/performance-0.3.0/cumulative/invalid-repeat-2.json b/evidence/performance-0.3.0/cumulative/invalid-repeat-2.json
+new file mode 100644
+index 0000000..35568ae
+--- /dev/null
++++ b/evidence/performance-0.3.0/cumulative/invalid-repeat-2.json
+@@ -0,0 +1,36 @@
++{
++  "workload": "invalid",
++  "before_mode": "full",
++  "after_mode": "full",
++  "before_seconds": [
++    0.0014306406666666667,
++    0.0013443913333333333,
++    0.0013682973333333332,
++    0.0014869496666666667,
++    0.0013556224999999999,
++    0.0013721896666666665,
++    0.0013734401666666667,
++    0.0013552588333333334,
++    0.0013518476666666667,
++    0.0013499125,
++    0.0013420098333333335
++  ],
++  "after_seconds": [
++    0.0013952691666666668,
++    0.0016047873333333333,
++    0.0014762445000000002,
++    0.0013478456666666666,
++    0.0014271476666666667,
++    0.001406414,
++    0.0014671043333333333,
++    0.0013776541666666667,
++    0.0018346255,
++    0.0014422076666666666,
++    0.0013519711666666668
++  ],
++  "medians_seconds": [
++    0.0013556224999999999,
++    0.0014271476666666667
++  ],
++  "speedup": 0.9498824344969674
++}
+diff --git a/evidence/performance-0.3.0/cumulative/invalid.json b/evidence/performance-0.3.0/cumulative/invalid.json
+new file mode 100644
+index 0000000..3f1e9bb
+--- /dev/null
++++ b/evidence/performance-0.3.0/cumulative/invalid.json
+@@ -0,0 +1,36 @@
++{
++  "workload": "invalid",
++  "before_mode": "full",
++  "after_mode": "full",
++  "before_seconds": [
++    0.001302352,
++    0.0014353283333333334,
++    0.0014576083333333334,
++    0.0015726135,
++    0.0021022898333333336,
++    0.001957228666666667,
++    0.0016399556666666665,
++    0.0016768786666666667,
++    0.0015982536666666665,
++    0.0021502341666666666,
++    0.0022833226666666667
++  ],
++  "after_seconds": [
++    0.0013364928333333334,
++    0.0014515691666666666,
++    0.0014788091666666668,
++    0.0020901845,
++    0.0020098691666666666,
++    0.002030394333333333,
++    0.002144846833333333,
++    0.0019362853333333334,
++    0.0016756533333333332,
++    0.002072983,
++    0.0015362686666666667
++  ],
++  "medians_seconds": [
++    0.0016399556666666665,
++    0.0019362853333333334
++  ],
++  "speedup": 0.8469597111720448
++}
+diff --git a/evidence/performance-0.3.0/cumulative/lean-domain.json b/evidence/performance-0.3.0/cumulative/lean-domain.json
+new file mode 100644
+index 0000000..b283122
+--- /dev/null
++++ b/evidence/performance-0.3.0/cumulative/lean-domain.json
+@@ -0,0 +1,36 @@
++{
++  "workload": "domain",
++  "before_mode": "scores",
++  "after_mode": "scores",
++  "before_seconds": [
++    0.0047097464,
++    0.0037572516,
++    0.0036980755999999997,
++    0.0041036496,
++    0.004212394600000001,
++    0.005610208199999999,
++    0.0052552844,
++    0.0058546266,
++    0.0056541004,
++    0.004157515,
++    0.0051330884
++  ],
++  "after_seconds": [
++    0.0036189218,
++    0.0034095335999999995,
++    0.0021988850000000002,
++    0.0022788078,
++    0.0023831183999999997,
++    0.0041037768,
++    0.003615757,
++    0.0037789193999999996,
++    0.0026709778,
++    0.0031602329999999997,
++    0.0027472842
++  ],
++  "medians_seconds": [
++    0.0047097464,
++    0.0031602329999999997
++  ],
++  "speedup": 1.490316188711402
++}
+diff --git a/evidence/performance-0.3.0/cumulative/lean-domain2.json b/evidence/performance-0.3.0/cumulative/lean-domain2.json
+new file mode 100644
+index 0000000..e68c141
+--- /dev/null
++++ b/evidence/performance-0.3.0/cumulative/lean-domain2.json
+@@ -0,0 +1,36 @@
++{
++  "workload": "domain2",
++  "before_mode": "scores",
++  "after_mode": "scores",
++  "before_seconds": [
++    1.16848e-05,
++    1.2752e-05,
++    1.946e-05,
++    1.40968e-05,
++    1.2506799999999999e-05,
++    1.25034e-05,
++    1.2682399999999999e-05,
++    2.08998e-05,
++    1.9142e-05,
++    1.3589e-05,
++    1.3002e-05
++  ],
++  "after_seconds": [
++    1.24706e-05,
++    1.27116e-05,
++    1.01382e-05,
++    1.4947e-05,
++    1.4616400000000001e-05,
++    1.30286e-05,
++    1.2747999999999999e-05,
++    1.29794e-05,
++    1.17582e-05,
++    1.17204e-05,
++    1.3693599999999999e-05
++  ],
++  "medians_seconds": [
++    1.3002e-05,
++    1.2747999999999999e-05
++  ],
++  "speedup": 1.019924694069658
++}
+diff --git a/evidence/performance-0.3.0/cumulative/lean-serial.json b/evidence/performance-0.3.0/cumulative/lean-serial.json
+new file mode 100644
+index 0000000..0249b05
+--- /dev/null
++++ b/evidence/performance-0.3.0/cumulative/lean-serial.json
+@@ -0,0 +1,36 @@
++{
++  "workload": "serial",
++  "before_mode": "scores",
++  "after_mode": "scores",
++  "before_seconds": [
++    0.013414878,
++    0.01351922675,
++    0.01369215375,
++    0.013737174,
++    0.01408800475,
++    0.01496972325,
++    0.01424318925,
++    0.01779253925,
++    0.01504955725,
++    0.01507925925,
++    0.0122805895
++  ],
++  "after_seconds": [
++    0.0014096585,
++    0.0013938495,
++    0.0013969225,
++    0.0014337575,
++    0.00148780075,
++    0.00328065925,
++    0.001352916,
++    0.00145606725,
++    0.001601609,
++    0.001479354,
++    0.001571477
++  ],
++  "medians_seconds": [
++    0.01408800475,
++    0.00145606725
++  ],
++  "speedup": 9.675380549902487
++}
+diff --git a/evidence/performance-0.3.0/cumulative/matrix-domain.json b/evidence/performance-0.3.0/cumulative/matrix-domain.json
+new file mode 100644
+index 0000000..775eaa7
+--- /dev/null
++++ b/evidence/performance-0.3.0/cumulative/matrix-domain.json
+@@ -0,0 +1,36 @@
++{
++  "workload": "domain",
++  "before_mode": "scores",
++  "after_mode": "matrix",
++  "before_seconds": [
++    0.0037957900000000003,
++    0.0043270997999999995,
++    0.0029939858,
++    0.0048751804,
++    0.0044544476,
++    0.0045751782,
++    0.0050879608,
++    0.0038517907999999997,
++    0.0038417918,
++    0.0047347425999999995,
++    0.0055096152
++  ],
++  "after_seconds": [
++    0.0021201896,
++    0.0021256914,
++    0.0027373712000000002,
++    0.0030808294,
++    0.0022554562,
++    0.0027612048,
++    0.0024680906,
++    0.002272843,
++    0.0022403592,
++    0.0027596369999999997,
++    0.0034756202
++  ],
++  "medians_seconds": [
++    0.0044544476,
++    0.0024680906
++  ],
++  "speedup": 1.804815268937048
++}
+diff --git a/evidence/performance-0.3.0/cumulative/matrix-serial.json b/evidence/performance-0.3.0/cumulative/matrix-serial.json
+new file mode 100644
+index 0000000..640ee15
+--- /dev/null
++++ b/evidence/performance-0.3.0/cumulative/matrix-serial.json
+@@ -0,0 +1,36 @@
++{
++  "workload": "serial",
++  "before_mode": "scores",
++  "after_mode": "matrix",
++  "before_seconds": [
++    0.0182785305,
++    0.0142664595,
++    0.0115626015,
++    0.0117079955,
++    0.011467166,
++    0.01153035275,
++    0.01139419075,
++    0.0230418455,
++    0.023321291,
++    0.016894244,
++    0.01606812375
++  ],
++  "after_seconds": [
++    0.00179541725,
++    0.00166027275,
++    0.00109009625,
++    0.001096265,
++    0.00123636275,
++    0.001060028,
++    0.0011098905,
++    0.0012907055,
++    0.00236044925,
++    0.002537275,
++    0.00142898675
++  ],
++  "medians_seconds": [
++    0.0142664595,
++    0.0012907055
++  ],
++  "speedup": 11.053225929540085
++}
+diff --git a/evidence/performance-0.3.0/cumulative/one.json b/evidence/performance-0.3.0/cumulative/one.json
+new file mode 100644
+index 0000000..945eaed
+--- /dev/null
++++ b/evidence/performance-0.3.0/cumulative/one.json
+@@ -0,0 +1,36 @@
++{
++  "workload": "one",
++  "before_mode": "full",
++  "after_mode": "full",
++  "before_seconds": [
++    0.000234528575,
++    0.0002612393,
++    0.00018764120000000002,
++    0.000264738725,
++    0.00019136765,
++    0.00023225715,
++    0.00022855135,
++    0.0001824115,
++    0.00016777835,
++    0.000172640775,
++    0.00017397155
++  ],
++  "after_seconds": [
++    2.96179e-05,
++    3.5222474999999995e-05,
++    4.5418200000000005e-05,
++    4.9540975e-05,
++    2.920425e-05,
++    2.9489274999999997e-05,
++    4.5800125000000004e-05,
++    4.8361524999999996e-05,
++    2.9349925e-05,
++    3.03101e-05,
++    3.1411175e-05
++  ],
++  "medians_seconds": [
++    0.00019136765,
++    3.1411175e-05
++  ],
++  "speedup": 6.092342932093435
++}
+diff --git a/evidence/performance-0.3.0/cumulative/parallel.json b/evidence/performance-0.3.0/cumulative/parallel.json
+new file mode 100644
+index 0000000..1ff2be7
+--- /dev/null
++++ b/evidence/performance-0.3.0/cumulative/parallel.json
+@@ -0,0 +1,36 @@
++{
++  "workload": "parallel",
++  "before_mode": "full",
++  "after_mode": "full",
++  "before_seconds": [
++    0.0099558895,
++    0.0087437895,
++    0.01045756025,
++    0.00864871775,
++    0.00807414175,
++    0.00946552375,
++    0.0104244465,
++    0.01034393475,
++    0.00925224375,
++    0.008704779,
++    0.0119456185
++  ],
++  "after_seconds": [
++    0.0020885045,
++    0.00178731275,
++    0.0019594275,
++    0.00165750475,
++    0.00156188325,
++    0.00223547075,
++    0.00211851075,
++    0.001942662,
++    0.00187667025,
++    0.00167468675,
++    0.0025306275
++  ],
++  "medians_seconds": [
++    0.00946552375,
++    0.001942662
++  ],
++  "speedup": 4.8724501483016605
++}
+diff --git a/evidence/performance-0.3.0/cumulative/serial.json b/evidence/performance-0.3.0/cumulative/serial.json
+new file mode 100644
+index 0000000..f6b831e
+--- /dev/null
++++ b/evidence/performance-0.3.0/cumulative/serial.json
+@@ -0,0 +1,36 @@
++{
++  "workload": "serial",
++  "before_mode": "full",
++  "after_mode": "full",
++  "before_seconds": [
++    0.01134286475,
++    0.0146428985,
++    0.014650864,
++    0.01480578975,
++    0.01489545875,
++    0.01364351675,
++    0.01454485975,
++    0.01397844675,
++    0.0148939115,
++    0.0149290225,
++    0.01463666525
++  ],
++  "after_seconds": [
++    0.0020884595,
++    0.002078216,
++    0.002693743,
++    0.00275912225,
++    0.00267564975,
++    0.002536053,
++    0.0025747425,
++    0.00259832225,
++    0.00272046325,
++    0.00266859325,
++    0.00257323975
++  ],
++  "medians_seconds": [
++    0.0146428985,
++    0.00259832225
++  ],
++  "speedup": 5.63552057486326
++}
+diff --git a/evidence/performance-0.3.0/cumulative/trace.json b/evidence/performance-0.3.0/cumulative/trace.json
+new file mode 100644
+index 0000000..c4e8d68
+--- /dev/null
++++ b/evidence/performance-0.3.0/cumulative/trace.json
+@@ -0,0 +1,36 @@
++{
++  "workload": "trace",
++  "before_mode": "full",
++  "after_mode": "full",
++  "before_seconds": [
++    0.001925063,
++    0.0018686883333333335,
++    0.0019503598333333334,
++    0.0025552076666666666,
++    0.0024467486666666666,
++    0.0024532816666666666,
++    0.0024430781666666666,
++    0.002567012333333333,
++    0.0021731725,
++    0.0022894451666666668,
++    0.0022188719999999998
++  ],
++  "after_seconds": [
++    0.0004810771666666667,
++    0.00044316449999999997,
++    0.00047616566666666666,
++    0.0006128308333333333,
++    0.000586832,
++    0.0005993645,
++    0.000674316,
++    0.0006578345,
++    0.0005927545,
++    0.0005623005,
++    0.0005958156666666666
++  ],
++  "medians_seconds": [
++    0.0022894451666666668,
++    0.0005927545
++  ],
++  "speedup": 3.862383443173636
++}
+diff --git a/evidence/performance-0.3.0/python-optimization.json b/evidence/performance-0.3.0/python-optimization.json
+new file mode 100644
+index 0000000..cbbef9a
+--- /dev/null
++++ b/evidence/performance-0.3.0/python-optimization.json
+@@ -0,0 +1,570 @@
++{
++  "host": "2 vCPUs, Intel(R) Xeon(R) Processor @ 2.10GHz (KVM), Rust 1.97.0, CPython 3.12, NumPy 2.3.5, SciPy 1.17.0",
++  "command": "taskset -c 0 python -I validation/optimize_performance.py population_epidemiology [--scores|--matrix]",
++  "order": "7 rounds; each round runs the five configurations in the listed order",
++  "wheels": {
++    "v0.2.0": {
++      "file": "population_epidemiology-0.2.0-cp310-abi3-manylinux_2_34_x86_64.whl",
++      "sha256": "a1efb73dd44743a7e995426ed7989714d96125e3cd474e4687d4628216814c93"
++    },
++    "v0.3.0": {
++      "file": "population_epidemiology-0.3.0-cp310-abi3-manylinux_2_34_x86_64.whl",
++      "built_from": "maturin sdist, extracted, then maturin build --release --locked",
++      "native_module": [
++        "population_epidemiology/_native.abi3.so",
++        "0310232883d5468e4416f1ae21411cc93cf28b5b7fedd7a28a7b67aa6cf11db4"
++      ]
++    }
++  },
++  "medians_seconds": {
++    "v0.2.0-full": {
++      "prepare_seconds": 9.172099998977501e-05,
++      "search_seconds": 0.017067847000362235,
++      "replay_seconds": 0.00047900399931677384,
++      "total_seconds": 0.017693747000521398
++    },
++    "v0.2.0-scores": {
++      "prepare_seconds": 9.102200056076981e-05,
++      "search_seconds": 0.015480763000596198,
++      "replay_seconds": 0.00044112800060247537,
++      "total_seconds": 0.01601090399981331
++    },
++    "v0.3.0-full": {
++      "prepare_seconds": 0.00029432899918901967,
++      "search_seconds": 0.007366071000433294,
++      "replay_seconds": 0.0002550810004322557,
++      "total_seconds": 0.007908653999948001
++    },
++    "v0.3.0-scores": {
++      "prepare_seconds": 0.0002949009995063534,
++      "search_seconds": 0.005564428999605298,
++      "replay_seconds": 0.00028833099986513844,
++      "total_seconds": 0.006124734999502834
++    },
++    "v0.3.0-matrix": {
++      "prepare_seconds": 0.0003504639998936909,
++      "search_seconds": 0.005639022000650584,
++      "replay_seconds": 0.0003286500004833215,
++      "total_seconds": 0.006366726999658567
++    }
++  },
++  "agreement": {
++    "v0.2.0-full": [
++      "[48, 0, [0.7, 0.4], 1.9996263162291143e-24]"
++    ],
++    "v0.2.0-scores": [
++      "[48, 0, [0.7, 0.4], 1.9996263162291143e-24]"
++    ],
++    "v0.3.0-full": [
++      "[48, 0, [0.7, 0.4], 1.9996263162291143e-24]"
++    ],
++    "v0.3.0-scores": [
++      "[48, 0, [0.7, 0.4], 1.9996263162291143e-24]"
++    ],
++    "v0.3.0-matrix": [
++      "[48, 0, [0.7, 0.4], 1.9996263162291143e-24]"
++    ]
++  },
++  "runs": {
++    "v0.2.0-full": [
++      {
++        "mode": "full",
++        "total_seconds": 0.012995895999665663,
++        "prepare_seconds": 8.704100036993623e-05,
++        "search_seconds": 0.01259199199921568,
++        "replay_seconds": 0.00031686300008004764,
++        "evaluations": 48,
++        "failures": 0,
++        "best": [
++          0.7,
++          0.4
++        ],
++        "score": 1.9996263162291143e-24
++      },
++      {
++        "mode": "full",
++        "total_seconds": 0.017693747000521398,
++        "prepare_seconds": 0.00013330199999472825,
++        "search_seconds": 0.017067847000362235,
++        "replay_seconds": 0.0004925980001644348,
++        "evaluations": 48,
++        "failures": 0,
++        "best": [
++          0.7,
++          0.4
++        ],
++        "score": 1.9996263162291143e-24
++      },
++      {
++        "mode": "full",
++        "total_seconds": 0.029210325000349258,
++        "prepare_seconds": 0.00017163300071842968,
++        "search_seconds": 0.02826017099960154,
++        "replay_seconds": 0.0007785210000292864,
++        "evaluations": 48,
++        "failures": 0,
++        "best": [
++          0.7,
++          0.4
++        ],
++        "score": 1.9996263162291143e-24
++      },
++      {
++        "mode": "full",
++        "total_seconds": 0.01822238499971718,
++        "prepare_seconds": 8.613799946033396e-05,
++        "search_seconds": 0.017686588000287884,
++        "replay_seconds": 0.0004496589999689604,
++        "evaluations": 48,
++        "failures": 0,
++        "best": [
++          0.7,
++          0.4
++        ],
++        "score": 1.9996263162291143e-24
++      },
++      {
++        "mode": "full",
++        "total_seconds": 0.01657599999998638,
++        "prepare_seconds": 8.328300009452505e-05,
++        "search_seconds": 0.016082631000244874,
++        "replay_seconds": 0.0004100859996469808,
++        "evaluations": 48,
++        "failures": 0,
++        "best": [
++          0.7,
++          0.4
++        ],
++        "score": 1.9996263162291143e-24
++      },
++      {
++        "mode": "full",
++        "total_seconds": 0.025494112000160385,
++        "prepare_seconds": 9.516899990558159e-05,
++        "search_seconds": 0.024711609000405588,
++        "replay_seconds": 0.0006873339998492156,
++        "evaluations": 48,
++        "failures": 0,
++        "best": [
++          0.7,
++          0.4
++        ],
++        "score": 1.9996263162291143e-24
++      },
++      {
++        "mode": "full",
++        "total_seconds": 0.016372625999792945,
++        "prepare_seconds": 9.172099998977501e-05,
++        "search_seconds": 0.015801901000486396,
++        "replay_seconds": 0.00047900399931677384,
++        "evaluations": 48,
++        "failures": 0,
++        "best": [
++          0.7,
++          0.4
++        ],
++        "score": 1.9996263162291143e-24
++      }
++    ],
++    "v0.2.0-scores": [
++      {
++        "mode": "scores",
++        "total_seconds": 0.012316375000409607,
++        "prepare_seconds": 8.068300030572573e-05,
++        "search_seconds": 0.011901036000381282,
++        "replay_seconds": 0.0003346559997225995,
++        "evaluations": 48,
++        "failures": 0,
++        "best": [
++          0.7,
++          0.4
++        ],
++        "score": 1.9996263162291143e-24
++      },
++      {
++        "mode": "scores",
++        "total_seconds": 0.01601090399981331,
++        "prepare_seconds": 9.110799965128535e-05,
++        "search_seconds": 0.015480763000596198,
++        "replay_seconds": 0.00043903299956582487,
++        "evaluations": 48,
++        "failures": 0,
++        "best": [
++          0.7,
++          0.4
++        ],
++        "score": 1.9996263162291143e-24
++      },
++      {
++        "mode": "scores",
++        "total_seconds": 0.01628634400003648,
++        "prepare_seconds": 9.102200056076981e-05,
++        "search_seconds": 0.015692726999986917,
++        "replay_seconds": 0.0005025949994887924,
++        "evaluations": 48,
++        "failures": 0,
++        "best": [
++          0.7,
++          0.4
++        ],
++        "score": 1.9996263162291143e-24
++      },
++      {
++        "mode": "scores",
++        "total_seconds": 0.017831154999839782,
++        "prepare_seconds": 9.704799958853982e-05,
++        "search_seconds": 0.01715702000001329,
++        "replay_seconds": 0.0005770870002379525,
++        "evaluations": 48,
++        "failures": 0,
++        "best": [
++          0.7,
++          0.4
++        ],
++        "score": 1.9996263162291143e-24
++      },
++      {
++        "mode": "scores",
++        "total_seconds": 0.01648600600037753,
++        "prepare_seconds": 8.64670000737533e-05,
++        "search_seconds": 0.0159584109997013,
++        "replay_seconds": 0.00044112800060247537,
++        "evaluations": 48,
++        "failures": 0,
++        "best": [
++          0.7,
++          0.4
++        ],
++        "score": 1.9996263162291143e-24
++      },
++      {
++        "mode": "scores",
++        "total_seconds": 0.014823528999841074,
++        "prepare_seconds": 9.5696000244061e-05,
++        "search_seconds": 0.014281607999691914,
++        "replay_seconds": 0.00044622499990509823,
++        "evaluations": 48,
++        "failures": 0,
++        "best": [
++          0.7,
++          0.4
++        ],
++        "score": 1.9996263162291143e-24
++      },
++      {
++        "mode": "scores",
++        "total_seconds": 0.01216143799956626,
++        "prepare_seconds": 8.842699935485143e-05,
++        "search_seconds": 0.011726031000762305,
++        "replay_seconds": 0.00034697999944910407,
++        "evaluations": 48,
++        "failures": 0,
++        "best": [
++          0.7,
++          0.4
++        ],
++        "score": 1.9996263162291143e-24
++      }
++    ],
++    "v0.3.0-full": [
++      {
++        "mode": "full",
++        "total_seconds": 0.009523640999759664,
++        "prepare_seconds": 0.0003579969998099841,
++        "search_seconds": 0.008867280000231403,
++        "replay_seconds": 0.0002983639997182763,
++        "evaluations": 48,
++        "failures": 0,
++        "best": [
++          0.7,
++          0.4
++        ],
++        "score": 1.9996263162291143e-24
++      },
++      {
++        "mode": "full",
++        "total_seconds": 0.007263651999892318,
++        "prepare_seconds": 0.0003102959999523591,
++        "search_seconds": 0.006679125000118802,
++        "replay_seconds": 0.00027423099982115673,
++        "evaluations": 48,
++        "failures": 0,
++        "best": [
++          0.7,
++          0.4
++        ],
++        "score": 1.9996263162291143e-24
++      },
++      {
++        "mode": "full",
++        "total_seconds": 0.007860929999878863,
++        "prepare_seconds": 0.0002763419997791061,
++        "search_seconds": 0.007300229000065883,
++        "replay_seconds": 0.0002843590000338736,
++        "evaluations": 48,
++        "failures": 0,
++        "best": [
++          0.7,
++          0.4
++        ],
++        "score": 1.9996263162291143e-24
++      },
++      {
++        "mode": "full",
++        "total_seconds": 0.007908653999948001,
++        "prepare_seconds": 0.00029432899918901967,
++        "search_seconds": 0.007366071000433294,
++        "replay_seconds": 0.00024825400032568723,
++        "evaluations": 48,
++        "failures": 0,
++        "best": [
++          0.7,
++          0.4
++        ],
++        "score": 1.9996263162291143e-24
++      },
++      {
++        "mode": "full",
++        "total_seconds": 0.011087222000242036,
++        "prepare_seconds": 0.00043673900017893175,
++        "search_seconds": 0.010395401999630849,
++        "replay_seconds": 0.0002550810004322557,
++        "evaluations": 48,
++        "failures": 0,
++        "best": [
++          0.7,
++          0.4
++        ],
++        "score": 1.9996263162291143e-24
++      },
++      {
++        "mode": "full",
++        "total_seconds": 0.00746442899981048,
++        "prepare_seconds": 0.00026747599986265413,
++        "search_seconds": 0.006952902999728394,
++        "replay_seconds": 0.00024405000021943124,
++        "evaluations": 48,
++        "failures": 0,
++        "best": [
++          0.7,
++          0.4
++        ],
++        "score": 1.9996263162291143e-24
++      },
++      {
++        "mode": "full",
++        "total_seconds": 0.008819445000881387,
++        "prepare_seconds": 0.00026203400011581834,
++        "search_seconds": 0.008306158000777941,
++        "replay_seconds": 0.00025125299998762785,
++        "evaluations": 48,
++        "failures": 0,
++        "best": [
++          0.7,
++          0.4
++        ],
++        "score": 1.9996263162291143e-24
++      }
++    ],
++    "v0.3.0-scores": [
++      {
++        "mode": "scores",
++        "total_seconds": 0.006253004999962286,
++        "prepare_seconds": 0.0002949009995063534,
++        "search_seconds": 0.005673170000591199,
++        "replay_seconds": 0.0002849339998647338,
++        "evaluations": 48,
++        "failures": 0,
++        "best": [
++          0.7,
++          0.4
++        ],
++        "score": 1.9996263162291143e-24
++      },
++      {
++        "mode": "scores",
++        "total_seconds": 0.0058055949994013645,
++        "prepare_seconds": 0.00029668299976037815,
++        "search_seconds": 0.005244383999524871,
++        "replay_seconds": 0.00026452800011611544,
++        "evaluations": 48,
++        "failures": 0,
++        "best": [
++          0.7,
++          0.4
++        ],
++        "score": 1.9996263162291143e-24
++      },
++      {
++        "mode": "scores",
++        "total_seconds": 0.006282184999690799,
++        "prepare_seconds": 0.00027608899927145103,
++        "search_seconds": 0.005707007000637532,
++        "replay_seconds": 0.0002990889997818158,
++        "evaluations": 48,
++        "failures": 0,
++        "best": [
++          0.7,
++          0.4
++        ],
++        "score": 1.9996263162291143e-24
++      },
++      {
++        "mode": "scores",
++        "total_seconds": 0.006124734999502834,
++        "prepare_seconds": 0.0002830749999702675,
++        "search_seconds": 0.005564428999605298,
++        "replay_seconds": 0.0002772309999272693,
++        "evaluations": 48,
++        "failures": 0,
++        "best": [
++          0.7,
++          0.4
++        ],
++        "score": 1.9996263162291143e-24
++      },
++      {
++        "mode": "scores",
++        "total_seconds": 0.005798277000394592,
++        "prepare_seconds": 0.0002697609997994732,
++        "search_seconds": 0.00524018500072998,
++        "replay_seconds": 0.00028833099986513844,
++        "evaluations": 48,
++        "failures": 0,
++        "best": [
++          0.7,
++          0.4
++        ],
++        "score": 1.9996263162291143e-24
++      },
++      {
++        "mode": "scores",
++        "total_seconds": 0.006105403000219667,
++        "prepare_seconds": 0.00030543600041710306,
++        "search_seconds": 0.005439716999717348,
++        "replay_seconds": 0.000360250000085216,
++        "evaluations": 48,
++        "failures": 0,
++        "best": [
++          0.7,
++          0.4
++        ],
++        "score": 1.9996263162291143e-24
++      },
++      {
++        "mode": "scores",
++        "total_seconds": 0.0066129749993706355,
++        "prepare_seconds": 0.0003659799995148205,
++        "search_seconds": 0.005950562000180071,
++        "replay_seconds": 0.0002964329996757442,
++        "evaluations": 48,
++        "failures": 0,
++        "best": [
++          0.7,
++          0.4
++        ],
++        "score": 1.9996263162291143e-24
++      }
++    ],
++    "v0.3.0-matrix": [
++      {
++        "mode": "matrix",
++        "total_seconds": 0.0063769839998713,
++        "prepare_seconds": 0.00033859700033644913,
++        "search_seconds": 0.005711789000088174,
++        "replay_seconds": 0.0003265979994466761,
++        "evaluations": 48,
++        "failures": 0,
++        "best": [
++          0.7,
++          0.4
++        ],
++        "score": 1.9996263162291143e-24
++      },
++      {
++        "mode": "matrix",
++        "total_seconds": 0.00778614600039873,
++        "prepare_seconds": 0.00035651899997901637,
++        "search_seconds": 0.0071009769999363925,
++        "replay_seconds": 0.0003286500004833215,
++        "evaluations": 48,
++        "failures": 0,
++        "best": [
++          0.7,
++          0.4
++        ],
++        "score": 1.9996263162291143e-24
++      },
++      {
++        "mode": "matrix",
++        "total_seconds": 0.006366726999658567,
++        "prepare_seconds": 0.000354093999703764,
++        "search_seconds": 0.005639022000650584,
++        "replay_seconds": 0.00037361099930421915,
++        "evaluations": 48,
++        "failures": 0,
++        "best": [
++          0.7,
++          0.4
++        ],
++        "score": 1.9996263162291143e-24
++      },
++      {
++        "mode": "matrix",
++        "total_seconds": 0.006388582999534265,
++        "prepare_seconds": 0.0003592709999793442,
++        "search_seconds": 0.005668224999681115,
++        "replay_seconds": 0.0003610869998738053,
++        "evaluations": 48,
++        "failures": 0,
++        "best": [
++          0.7,
++          0.4
++        ],
++        "score": 1.9996263162291143e-24
++      },
++      {
++        "mode": "matrix",
++        "total_seconds": 0.00543805999950564,
++        "prepare_seconds": 0.0002896710002460168,
++        "search_seconds": 0.00484441299977334,
++        "replay_seconds": 0.0003039759994862834,
++        "evaluations": 48,
++        "failures": 0,
++        "best": [
++          0.7,
++          0.4
++        ],
++        "score": 1.9996263162291143e-24
++      },
++      {
++        "mode": "matrix",
++        "total_seconds": 0.006331058999421657,
++        "prepare_seconds": 0.0003504639998936909,
++        "search_seconds": 0.005430187999991176,
++        "replay_seconds": 0.00055040699953679,
++        "evaluations": 48,
++        "failures": 0,
++        "best": [
++          0.7,
++          0.4
++        ],
++        "score": 1.9996263162291143e-24
++      },
++      {
++        "mode": "matrix",
++        "total_seconds": 0.005495337999491312,
++        "prepare_seconds": 0.0002872160002880264,
++        "search_seconds": 0.004905609999696026,
++        "replay_seconds": 0.00030251199950726004,
++        "evaluations": 48,
++        "failures": 0,
++        "best": [
++          0.7,
++          0.4
++        ],
++        "score": 1.9996263162291143e-24
++      }
++    ]
++  }
++}
+diff --git a/examples/breakdown.rs b/examples/breakdown.rs
+new file mode 100644
+index 0000000..c83bbb7
+--- /dev/null
++++ b/examples/breakdown.rs
+@@ -0,0 +1,185 @@
++//! Where a prepared call's time goes, measured through the public API.
++//!
++//! `cargo run --release --example breakdown -- models/example.json` prints
++//! JSON with median microseconds per call over 41 alternating rounds. For each workload it times
++//! candidate decoding alone, the typed matrix API (evaluation without
++//! JSON), lean `scores_json` and full `evaluate_json`. The differences give
++//! the JSON boundary and the cost of full-record metrics. It also times model
++//! preparation, the vendored-solver fallback for one SIR candidate (a
++//! cancel-file budget routes SIR through `crn_craft::fsp::solve`) and worker
++//! scaling for the 96-candidate SIR batch.
++use population_epidemiology::{Candidate, Prepared};
++use serde_json::{Value, json};
++use std::{hint::black_box, time::Instant};
++
++/// Alternating measurement rounds per case; the median is reported.
++const ROUNDS: usize = 41;
++
++/// Median microseconds per call over alternating rounds of `repeats` calls.
++fn medians(rounds: usize, repeats: u32, cases: &mut [&mut dyn FnMut()]) -> Vec<f64> {
++    let mut samples = vec![Vec::with_capacity(rounds); cases.len()];
++    for case in cases.iter_mut() {
++        case();
++    }
++    for _ in 0..rounds {
++        for (case, times) in cases.iter_mut().zip(&mut samples) {
++            let start = Instant::now();
++            for _ in 0..repeats {
++                case();
++            }
++            times.push(start.elapsed().as_secs_f64() * 1e6 / f64::from(repeats));
++        }
++    }
++    samples
++        .into_iter()
++        .map(|mut v| {
++            v.sort_by(f64::total_cmp);
++            v[v.len() / 2]
++        })
++        .collect()
++}
++
++fn candidates(count: usize, parameters: &[f64]) -> (String, Vec<f64>) {
++    let rows: Vec<Vec<f64>> = (0..count)
++        .map(|i| {
++            let mut row = parameters.to_vec();
++            if let Some(first) = row.first_mut() {
++                *first *= 1.0 + (i % 13) as f64 * 0.003;
++            }
++            row
++        })
++        .collect();
++    let json: Vec<_> = rows
++        .iter()
++        .enumerate()
++        .map(|(i, r)| json!({"id": format!("candidate-{i:04}"), "parameters": r}))
++        .collect();
++    (Value::from(json).to_string(), rows.concat())
++}
++
++fn phases(name: &str, model: &Value, count: usize, parameters: &[f64], repeats: u32) -> Value {
++    let text = model.to_string();
++    let prepare = medians(
++        ROUNDS,
++        repeats.max(5),
++        &mut [&mut || {
++            black_box(Prepared::new(&text).unwrap());
++        }],
++    )[0];
++    let prepared = Prepared::new(&text).unwrap();
++    let (batch, flat) = candidates(count, parameters);
++    let budget = r#"{"workers":1}"#;
++    let times = medians(
++        ROUNDS,
++        repeats,
++        &mut [
++            &mut || {
++                black_box(serde_json::from_str::<Vec<Candidate>>(&batch).unwrap());
++            },
++            &mut || {
++                black_box(prepared.score_matrix(count, &flat, budget).unwrap());
++            },
++            &mut || {
++                black_box(prepared.scores_json(&batch, budget).unwrap());
++            },
++            &mut || {
++                black_box(prepared.evaluate_json(&batch, budget).unwrap());
++            },
++        ],
++    );
++    let [decode, matrix, lean, full] = [times[0], times[1], times[2], times[3]];
++    json!({
++        "workload": name, "candidates": count, "prepare_us": prepare,
++        "decode_us": decode, "matrix_us": matrix, "lean_us": lean, "full_us": full,
++        "matrix_us_per_candidate": matrix / count as f64,
++        "lean_us_per_candidate": lean / count as f64,
++        "full_us_per_candidate": full / count as f64,
++        "lean_json_boundary_us": lean - matrix,
++        "encode_and_checks_us": lean - matrix - decode,
++        "full_metrics_us": full - lean,
++        "full_output_bytes": prepared.evaluate_json(&batch, budget).unwrap().len(),
++    })
++}
++
++fn main() {
++    let path = std::env::args().nth(1).expect("example JSON path");
++    let example: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
++    let sir = &example["model"];
++    let fit: Vec<f64> = serde_json::from_value(example["parameters"].clone()).unwrap();
++    let moran = json!({"kind":"moran","population":18,"mutant_a":4,"mutant_b":3,"updates":65});
++    let calendar = json!({"kind":"calendar","initial_on_probability":0.3,
++        "segments":vec![json!({"duration":0.25,"on_rate":0.9,"off_rate":0.2}); 350]});
++    let workloads = vec![
++        phases("one (SIR)", sir, 1, &fit, 200),
++        phases("serial (SIR)", sir, 96, &fit, 4),
++        phases("invalid (SIR, 63 values)", sir, 1024, &[1.0; 63], 4),
++        phases("domain (Moran)", &moran, 48, &[], 4),
++        phases("domain2 (calendar)", &calendar, 48, &[], 40),
++    ];
++
++    // One SIR candidate through the prepared projection and through the
++    // vendored solver, which a cancel-file budget selects.
++    let prepared = Prepared::new(&sir.to_string()).unwrap();
++    let (one, _) = candidates(1, &fit);
++    let absent = std::env::temp_dir().join(format!("breakdown-absent-{}", std::process::id()));
++    let vendored = json!({"cancel_file": absent}).to_string();
++    let mut traced: Value = serde_json::from_str(&one).unwrap();
++    traced[0]["trace"] = json!(true);
++    let traced = traced.to_string();
++    let fallback = medians(
++        ROUNDS,
++        100,
++        &mut [
++            &mut || {
++                black_box(prepared.scores_json(&one, "{}").unwrap());
++            },
++            &mut || {
++                black_box(prepared.scores_json(&one, &vendored).unwrap());
++            },
++            &mut || {
++                black_box(prepared.evaluate_json(&traced, "{}").unwrap());
++            },
++            &mut || {
++                black_box(prepared.evaluate_json(&traced, &vendored).unwrap());
++            },
++        ],
++    );
++
++    // Worker scaling for the 96-candidate SIR batch.
++    let (batch, flat) = candidates(96, &fit);
++    let mut scaling = Vec::new();
++    for workers in [1, 2, 4] {
++        let budget = json!({"workers": workers}).to_string();
++        let t = medians(
++            ROUNDS,
++            4,
++            &mut [
++                &mut || {
++                    black_box(prepared.score_matrix(96, &flat, &budget).unwrap());
++                },
++                &mut || {
++                    black_box(prepared.scores_json(&batch, &budget).unwrap());
++                },
++                &mut || {
++                    black_box(prepared.evaluate_json(&batch, &budget).unwrap());
++                },
++            ],
++        );
++        scaling
++            .push(json!({"workers": workers, "matrix_us": t[0], "lean_us": t[1], "full_us": t[2]}));
++    }
++    println!(
++        "{}",
++        serde_json::to_string_pretty(&json!({
++            "unit": "median microseconds per call",
++            "available_parallelism": std::thread::available_parallelism().map(usize::from).ok(),
++            "workloads": workloads,
++            "sir_one_candidate": {
++                "prepared_lean_us": fallback[0], "vendored_solver_lean_us": fallback[1],
++                "prepared_traced_full_us": fallback[2], "vendored_solver_traced_full_us": fallback[3],
++            },
++            "sir_96_worker_scaling": scaling,
++        }))
++        .unwrap()
++    );
++}
+diff --git a/examples/matrix_scan.rs b/examples/matrix_scan.rs
+new file mode 100644
+index 0000000..b0ee312
+--- /dev/null
++++ b/examples/matrix_scan.rs
+@@ -0,0 +1,45 @@
++//! Scan SIR rates through the typed score-matrix API.
++//!
++//! `cargo run --release --example matrix_scan -- models/example.json` scores
++//! a 21 x 21 grid of (beta, gamma) rows without candidate or record JSON
++//! and prints the best complete row, then replays it as a full JSON record.
++use population_epidemiology::Prepared;
++use serde_json::{Value, json};
++
++fn main() -> Result<(), String> {
++    let path = std::env::args()
++        .nth(1)
++        .ok_or("example JSON path required")?;
++    let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
++    let example: Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
++    let prepared = Prepared::new(&example["model"].to_string())?;
++    // Row-major parameters: two values (beta, gamma) per row.
++    let mut parameters = Vec::new();
++    for i in 0..21 {
++        for j in 0..21 {
++            parameters.extend([0.3 + 0.04 * f64::from(i), 0.1 + 0.03 * f64::from(j)]);
++        }
++    }
++    let rows = parameters.len() / 2;
++    let scores = prepared.score_matrix(rows, &parameters, r#"{"workers":2}"#)?;
++    let (best, score) = scores
++        .iter()
++        .enumerate()
++        .filter_map(|(i, row)| row.score.map(|s| (i, s)))
++        .min_by(|a, b| a.1.total_cmp(&b.1))
++        .ok_or("no complete row")?;
++    let complete = scores.iter().filter(|r| r.status == "complete").count();
++    let x = &parameters[2 * best..2 * best + 2];
++    println!(
++        "{complete} of {rows} rows complete; best beta {:.2} gamma {:.2} score {score:.3e}",
++        x[0], x[1]
++    );
++    let replay =
++        prepared.evaluate_json(&json!([{"id": "best", "parameters": x}]).to_string(), "{}")?;
++    let record: Value = serde_json::from_str(&replay).map_err(|e| e.to_string())?;
++    println!(
++        "replay holdout MSE {}",
++        record["records"][0]["metrics"]["holdout_mse"]
++    );
++    Ok(())
++}
+diff --git a/examples/python/README.md b/examples/python/README.md
+new file mode 100644
+index 0000000..6f3ddbd
+--- /dev/null
++++ b/examples/python/README.md
+@@ -0,0 +1,29 @@
++# Python examples
++
++Each script runs against an installed `population_epidemiology` 0.3.0
++wheel. The optimization scripts also need NumPy, SciPy and fcmaes 2.1.0.
++Run a script from any directory, for example
++`python examples/python/sir_rate_landscape.py`. The output of the run
++recorded for the 0.3.0 release is saved under [`outputs/`](outputs/).
++Timings in the outputs come from a shared 2-vCPU host and vary.
++
++## Application examples
++
++| Script | Question | Model and APIs |
++| --- | --- | --- |
++| [`sir_rate_landscape.py`](sir_rate_landscape.py) | Which infection and recovery rates explain the packaged outbreak, and how sharply are they identified? | SIR; one `score_matrix` call over a 41 x 41 grid, full replay with `evaluate` |
++| [`sir_design_comparison.py`](sir_design_comparison.py) | How do early, spread and late sampling designs constrain beta, gamma and R0? | SIR with synthetic observations; `score_matrix` perturbations, `batch` finite-difference sensitivities, tolerance diagnostics |
++| [`moran_fixation_study.py`](moran_fixation_study.py) | How quickly does neutral drift fix one of two mutants, and does it reach the initial-frequency limit? | Moran populations 4 to 32; traced joint law, `max_steps` budgets, `work_limit` |
++| [`calendar_schedule_comparison.py`](calendar_schedule_comparison.py) | Which on-rate schedule with the same exposure leaves a two-state system most likely on? | Calendar; boundary traces, closed-form check, per-segment sensitivity |
++
++## Optimization examples
++
++| Script | Optimizer | Evaluation path |
++| --- | --- | --- |
++| [`optimize_scipy_de.py`](optimize_scipy_de.py) | SciPy `differential_evolution` (`vectorized=True`), then Nelder-Mead | one `score_matrix` call per generation, penalty for non-complete rows, traced replay |
++| [`optimize_fcmaes_cmaes.py`](optimize_fcmaes_cmaes.py) | fcmaes `cmaes.Cmaes` ask/tell | one `score_matrix` call per population on two native workers, penalty for non-complete rows |
++| [`optimize_fcmaes_minimize.py`](optimize_fcmaes_minimize.py) | fcmaes `bitecpp.minimize` and `cmaescpp.minimize` | scalar objective through `score_matrix([x])`, graded failure penalty outside the supported rate range |
++
++The Rust example [`../matrix_scan.rs`](../matrix_scan.rs) scans SIR rates
++with `Prepared::score_matrix` and replays the best row as a JSON record:
++`cargo run --release --locked --example matrix_scan -- models/example.json`.
+diff --git a/examples/python/calendar_schedule_comparison.py b/examples/python/calendar_schedule_comparison.py
+new file mode 100644
+index 0000000..4164e06
+--- /dev/null
++++ b/examples/python/calendar_schedule_comparison.py
+@@ -0,0 +1,64 @@
++"""Which switching schedule leaves a two-state system most likely in the on state?
++
++Compares constant, front-loaded, back-loaded and pulsed on-rate calendars
++over ten time units with the same total on-rate exposure (rate x time),
++reports the final and time-averaged on-probability, checks the constant
++schedule against the closed form and measures how the final probability
++responds to each quarter's on-rate.
++"""
++
++import math
++
++from population_epidemiology import Prepared
++
++OFF = 0.5
++QUARTERS = 4
++SPAN = 10.0
++
++
++def calendar(on_rates, initial=0.0, pieces=25):
++    """Split each quarter into equal segments so the boundary trace is smooth."""
++    duration = SPAN / QUARTERS / pieces
++    segments = [{"duration": duration, "on_rate": rate, "off_rate": OFF}
++                for rate in on_rates for _ in range(pieces)]
++    return {"kind": "calendar", "initial_on_probability": initial, "segments": segments}
++
++
++def summary(model):
++    row = Prepared(model).evaluate([])
++    boundaries = row["metrics"]["boundary_time_and_on_probability"]
++    # Trapezoid rule over the boundary trace, starting from the initial probability.
++    points = [(0.0, model["initial_on_probability"])] + [tuple(b) for b in boundaries]
++    area = sum((t1 - t0) * (p0 + p1) / 2 for (t0, p0), (t1, p1) in zip(points, points[1:]))
++    return row["score"], area / SPAN, row["steps"]
++
++
++schedules = {
++    "constant": [1.0, 1.0, 1.0, 1.0],
++    "front-loaded": [2.5, 1.0, 0.5, 0.0],
++    "back-loaded": [0.0, 0.5, 1.0, 2.5],
++    "pulsed": [2.0, 0.0, 2.0, 0.0],
++}
++print("schedule       final P(on)  mean P(on)  steps   (on-rate x time = 10 for each)")
++for name, rates in schedules.items():
++    assert abs(sum(rates) * SPAN / QUARTERS - 10.0) < 1e-12
++    final, mean, steps = summary(calendar(rates))
++    print(f"{name:14s} {final:.6f}     {mean:.6f}    {steps}")
++
++# Closed form for a constant schedule: p(t) = p_eq (1 - exp(-(on + off) t)).
++final, _, _ = summary(calendar([1.0] * 4))
++expected = 1.0 / (1.0 + OFF) * (1 - math.exp(-(1.0 + OFF) * SPAN))
++print(f"\nconstant schedule: {final:.15f} vs closed form {expected:.15f}")
++assert abs(final - expected) < 1e-12
++
++# Sensitivity of the final probability to each quarter's on-rate.
++base = schedules["pulsed"]
++h = 1e-6
++print("\nd final P(on) / d on-rate, pulsed schedule:")
++for q in range(QUARTERS):
++    up = list(base)
++    down = list(base)
++    up[q] += h
++    down[q] = max(down[q] - h, 0.0)
++    slope = (summary(calendar(up))[0] - summary(calendar(down))[0]) / (up[q] - down[q])
++    print(f"  quarter {q + 1}: {slope:+.6f}")
+diff --git a/examples/python/moran_fixation_study.py b/examples/python/moran_fixation_study.py
+new file mode 100644
+index 0000000..8c59b22
+--- /dev/null
++++ b/examples/python/moran_fixation_study.py
+@@ -0,0 +1,52 @@
++"""When does neutral drift fix a mutant, and how does that depend on population size?
++
++For populations of 4 to 32 with a quarter of the individuals carrying each
++of two neutral mutants, reports the probability that mutant A, mutant B or
++the wild type has reached fixation after a given number of update attempts.
++Neutral theory says each type eventually fixes with probability equal to
++its initial frequency (0.25, 0.25 and 0.5 here); the long runs approach
++that limit. The score is P(A fixed) + P(B fixed). The joint law from a
++traced evaluation gives the wild-type fixation probability. Large runs
++need an explicit ``max_steps`` because each update charges one logical
++step per state.
++"""
++
++from population_epidemiology import Prepared
++
++for n in (4, 8, 16, 32):
++    a0 = b0 = n // 4
++    states = (n + 1) * (n + 2) // 2
++    print(f"\npopulation {n} ({states} states), initial A = B = {a0}")
++    print("  updates   P(A fixed)  P(B fixed)  P(wild fixed)  P(segregating)  steps")
++    for updates in (n, 4 * n, 16 * n, 64 * n, 256 * n):
++        if updates > 10_000:
++            continue
++        model = {"kind": "moran", "population": n, "mutant_a": a0, "mutant_b": b0,
++                 "updates": updates}
++        row = Prepared(model).evaluate([], trace=True, max_steps=10_000_000)
++        assert row["status"] == "complete", row
++        m = row["metrics"]
++        fixed_a, fixed_b = m["marginal_a"][n], m["marginal_b"][n]
++        law = dict(zip(map(tuple, m["joint"]["states"]), m["joint"]["probabilities"]))
++        fixed_wild = law[(0, 0)]
++        segregating = 1 - fixed_a - fixed_b - fixed_wild
++        print(f"  {updates:7d}   {fixed_a:.6f}    {fixed_b:.6f}    {fixed_wild:.6f}       "
++              f"{segregating:.6f}        {row['steps']}")
++        assert abs(row["score"] - (fixed_a + fixed_b)) < 1e-15
++        assert abs(m["mass"] - 1) < 1e-12
++        assert row["steps"] == states * (updates + 1)
++
++# The default budget of 1,000,000 logical steps stops the largest case early.
++model = {"kind": "moran", "population": 32, "mutant_a": 8, "mutant_b": 8, "updates": 8192}
++row = Prepared(model).evaluate([])
++print(f"\npopulation 32, 8192 updates, default budget: {row['status']} after {row['steps']} "
++      f"steps ({row['detail']})")
++
++# The joint law of a small population, as returned by a traced evaluation.
++row = Prepared({"kind": "moran", "population": 3, "mutant_a": 1, "mutant_b": 1,
++                "updates": 3}).evaluate([], trace=True)
++joint = row["metrics"]["joint"]
++print("\njoint law, population 3 after 3 updates (state (a, b): probability):")
++for state, p in zip(joint["states"], joint["probabilities"], strict=True):
++    if p > 0:
++        print(f"  {tuple(state)}: {p:.6f}")
+diff --git a/examples/python/optimize_fcmaes_cmaes.py b/examples/python/optimize_fcmaes_cmaes.py
+new file mode 100644
+index 0000000..5e69b2d
+--- /dev/null
++++ b/examples/python/optimize_fcmaes_cmaes.py
+@@ -0,0 +1,62 @@
++"""Fit a larger, noisy outbreak with fcmaes CMA-ES through its ask/tell interface.
++
++The data are 11 noisy readings of the expected infected count of a
++20-person SIR outbreak (true beta 1.1, gamma 0.35). The first 7 points
++train the fit and the last 4 are held out. Each CMA-ES generation is
++scored with one ``score_matrix`` call on two native workers. The search
++box reaches past the supported rate range, so any out-of-range row comes
++back ``invalid`` and receives a penalty instead of a score.
++"""
++
++from time import perf_counter
++
++import numpy as np
++from loguru import logger
++from scipy.optimize import Bounds
++
++from fcmaes import cmaes
++from population_epidemiology import Prepared
++
++logger.remove()
++truth = [1.1, 0.35]
++times = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0, 12.0, 14.0]
++base = {"kind": "sir", "susceptible": 16, "infected": 3, "recovered": 1,
++        "sample_times": times, "train_count": 7, "tolerance": 1e-11}
++means = Prepared(base | {"observations": [0.0] * len(times)}).evaluate(truth)["metrics"]["infected_means"]
++noise = np.random.default_rng(5).normal(0.0, 0.15, len(times))
++observations = np.clip(np.array(means) + noise, 0.0, 20.0)
++observations[0] = means[0]  # the initial count is known exactly
++prepared = Prepared(base | {"observations": observations.tolist()})
++
++PENALTY = 1e6
++rng = np.random.default_rng(23)
++# With normalize=True (the default), input_sigma is relative to the box
++# mapped onto [-1, 1]; a much larger value clips most samples to its faces.
++optimizer = cmaes.Cmaes(bounds=Bounds([0.0, 0.0], [6.0, 6.0]), x0=np.array([2.0, 2.0]),
++                        input_sigma=0.3, popsize=16, max_evaluations=1600, rg=rng,
++                        randn=lambda *shape: rng.standard_normal(shape))
++evaluations = failures = generations = 0
++start = perf_counter()
++while True:
++    population = optimizer.ask()
++    scores, statuses, _ = prepared.score_matrix(population, workers=2)
++    values = np.array([s if st == "complete" else PENALTY for s, st in zip(scores, statuses)])
++    failures += int(np.sum(values == PENALTY))
++    evaluations += len(population)
++    generations += 1
++    if optimizer.tell(values) != 0 or evaluations >= 1600:
++        break
++elapsed = perf_counter() - start
++result = optimizer.result()
++x = np.asarray(result.x)
++print(f"CMA-ES: {evaluations} evaluations in {generations} generations, "
++      f"{failures} penalized rows, {elapsed * 1e3:.0f} ms")
++print(f"estimate beta {x[0]:.4f} gamma {x[1]:.4f} (truth {truth}), R0 {x[0] / x[1]:.3f}")
++row = prepared.evaluate(x.tolist())
++print(f"train MSE {row['score']:.4f} holdout MSE {row['metrics']['holdout_mse']:.4f}")
++truth_row = prepared.evaluate(truth)
++print(f"at the truth: train MSE {truth_row['score']:.4f} holdout MSE "
++      f"{truth_row['metrics']['holdout_mse']:.4f}")
++print("observed:", np.round(observations, 3).tolist())
++print("fitted:  ", np.round(row["metrics"]["infected_means"], 3).tolist())
++assert row["score"] <= truth_row["score"] + 1e-9
+diff --git a/examples/python/optimize_fcmaes_minimize.py b/examples/python/optimize_fcmaes_minimize.py
+new file mode 100644
+index 0000000..bda504a
+--- /dev/null
++++ b/examples/python/optimize_fcmaes_minimize.py
+@@ -0,0 +1,68 @@
++"""Fit the noisy 20-person outbreak with fcmaes standard minimizers and penalties.
++
++``bitecpp.minimize`` (BiteOpt) and ``cmaescpp.minimize`` call a scalar
++objective once per candidate. The objective scores one row with
++``score_matrix`` and maps every non-complete status to a fixed penalty, so
++the search box can extend past the supported rate range. Both runs use
++the same budget and seed and are replayed with full records.
++
++A flat penalty gives the optimizer no direction back into the supported
++range, so the penalty grows with the distance outside [0, 5] per rate.
++"""
++
++from time import perf_counter
++
++import numpy as np
++from loguru import logger
++from scipy.optimize import Bounds
++
++from fcmaes import bitecpp, cmaescpp
++from population_epidemiology import Prepared
++
++logger.remove()
++truth = [1.1, 0.35]
++times = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0, 12.0, 14.0]
++base = {"kind": "sir", "susceptible": 16, "infected": 3, "recovered": 1,
++        "sample_times": times, "train_count": 7, "tolerance": 1e-11}
++means = Prepared(base | {"observations": [0.0] * len(times)}).evaluate(truth)["metrics"]["infected_means"]
++noise = np.random.default_rng(5).normal(0.0, 0.15, len(times))
++observations = np.clip(np.array(means) + noise, 0.0, 20.0)
++observations[0] = means[0]
++prepared = Prepared(base | {"observations": observations.tolist()})
++
++PENALTY = 1e3
++LIMIT = 5.0  # rates must be in [0, 5] per time unit
++counts = {}
++
++
++def objective(x):
++    scores, statuses, _ = prepared.score_matrix([x])
++    counts["calls"] = counts.get("calls", 0) + 1
++    if statuses[0] != "complete":
++        counts["failures"] = counts.get("failures", 0) + 1
++        excess = np.sum(np.maximum(np.asarray(x) - LIMIT, 0.0) + np.maximum(-np.asarray(x), 0.0))
++        return PENALTY * (1.0 + excess)
++    return scores[0]
++
++
++bounds = Bounds([0.0, 0.0], [6.0, 6.0])
++for name, run in (
++    ("bitecpp.minimize", lambda: bitecpp.minimize(objective, bounds, x0=[2.0, 2.0],
++                                                  max_evaluations=1500,
++                                                  rg=np.random.default_rng(7))),
++    ("cmaescpp.minimize", lambda: cmaescpp.minimize(objective, bounds, x0=[2.0, 2.0],
++                                                    input_sigma=0.3, popsize=16,
++                                                    max_evaluations=1500,
++                                                    rg=np.random.default_rng(7))),
++):
++    counts.clear()
++    start = perf_counter()
++    result = run()
++    elapsed = perf_counter() - start
++    row = prepared.evaluate(np.asarray(result.x).tolist())
++    print(f"{name}: {result.nfev} evaluations, {counts.get('failures', 0)} penalized, "
++          f"{elapsed * 1e3:.0f} ms")
++    print(f"  beta {result.x[0]:.4f} gamma {result.x[1]:.4f} train MSE {row['score']:.4f} "
++          f"holdout MSE {row['metrics']['holdout_mse']:.4f}")
++    assert row["status"] == "complete" and abs(row["score"] - result.fun) < 1e-12
++print("truth:", truth)
+diff --git a/examples/python/optimize_scipy_de.py b/examples/python/optimize_scipy_de.py
+new file mode 100644
+index 0000000..4638376
+--- /dev/null
++++ b/examples/python/optimize_scipy_de.py
+@@ -0,0 +1,54 @@
++"""Fit beta and gamma with SciPy differential evolution over whole populations.
++
++SciPy's ``vectorized=True`` mode hands the objective every trial vector of
++a generation at once, as a (dimension, population) array. One
++``score_matrix`` call scores the generation without per-candidate JSON.
++Non-complete rows (here, rates outside the supported [0, 5] range because
++the search box deliberately reaches 5.5) get a penalty. A Nelder-Mead
++polish and a traced full replay of the winner follow.
++"""
++
++from time import perf_counter
++
++import numpy as np
++from scipy.optimize import differential_evolution, minimize
++
++from population_epidemiology import Prepared, load_example
++
++PENALTY = 1e6
++case = load_example()
++prepared = Prepared(case["model"])
++calls = {"generations": 0, "rows": 0, "failures": 0}
++
++
++def objective(x):
++    rows = np.atleast_2d(x.T)  # one row per trial vector
++    scores, statuses, _ = prepared.score_matrix(rows)
++    calls["generations"] += 1
++    calls["rows"] += len(rows)
++    failed = [s != "complete" for s in statuses]
++    calls["failures"] += sum(failed)
++    return np.where(failed, PENALTY, scores)
++
++
++start = perf_counter()
++result = differential_evolution(objective, [(0.0, 5.5), (0.0, 5.5)], seed=11, popsize=15,
++                                maxiter=60, tol=1e-12, polish=False, vectorized=True,
++                                updating="deferred")
++search = perf_counter() - start
++print(f"DE: {calls['rows']} rows scored in {calls['generations']} score_matrix calls, "
++      f"{calls['failures']} penalized rows, {search * 1e3:.0f} ms")
++print(f"DE best {np.round(result.x, 6).tolist()} train MSE {result.fun:.3e}")
++
++polish = minimize(lambda x: float(objective(x.reshape(2, 1))[0]), result.x, method="Nelder-Mead",
++                  options={"xatol": 1e-9, "fatol": 1e-28, "maxiter": 400})
++print(f"Nelder-Mead polish {np.round(polish.x, 9).tolist()} train MSE {polish.fun:.3e} "
++      f"({polish.nfev} evaluations)")
++
++row = prepared.evaluate(polish.x.tolist(), trace=True)
++assert row["status"] == "complete", row
++metrics = row["metrics"]
++print("traced replay: holdout MSE", f"{metrics['holdout_mse']:.3e}",
++      "| FSP states", len(metrics["fsp"]["states"]), "| FSP work", metrics["fsp_work"])
++print("truth used to generate the packaged observations:", case["parameters"])
++assert np.allclose(polish.x, case["parameters"], atol=1e-4)
+diff --git a/examples/python/outputs/calendar_schedule_comparison.txt b/examples/python/outputs/calendar_schedule_comparison.txt
+new file mode 100644
+index 0000000..85e5ca3
+--- /dev/null
++++ b/examples/python/outputs/calendar_schedule_comparison.txt
+@@ -0,0 +1,13 @@
++schedule       final P(on)  mean P(on)  steps   (on-rate x time = 10 for each)
++constant       0.666666     0.622139    100
++front-loaded   0.147264     0.571903    100
++back-loaded    0.833238     0.434761    100
++pulsed         0.228888     0.572960    100
++
++constant schedule: 0.666666462731786 vs closed form 0.666666462731786
++
++d final P(on) / d on-rate, pulsed schedule:
++  quarter 1: +0.000013
++  quarter 2: +0.000473
++  quarter 3: +0.023666
++  quarter 4: +0.854770
+diff --git a/examples/python/outputs/matrix_scan.txt b/examples/python/outputs/matrix_scan.txt
+new file mode 100644
+index 0000000..580e78b
+--- /dev/null
++++ b/examples/python/outputs/matrix_scan.txt
+@@ -0,0 +1,2 @@
++441 of 441 rows complete; best beta 0.70 gamma 0.40 score 2.000e-24
++replay holdout MSE 4.398290550445194e-24
+diff --git a/examples/python/outputs/moran_fixation_study.txt b/examples/python/outputs/moran_fixation_study.txt
+new file mode 100644
+index 0000000..798a1fb
+--- /dev/null
++++ b/examples/python/outputs/moran_fixation_study.txt
+@@ -0,0 +1,46 @@
++
++population 4 (15 states), initial A = B = 1
++  updates   P(A fixed)  P(B fixed)  P(wild fixed)  P(segregating)  steps
++        4   0.024170    0.024170    0.148682       0.802979        75
++       16   0.197005    0.197005    0.429160       0.176830        255
++       64   0.249913    0.249913    0.499883       0.000291        975
++      256   0.250000    0.250000    0.500000       0.000000        3855
++     1024   0.250000    0.250000    0.500000       0.000000        15375
++
++population 8 (45 states), initial A = B = 2
++  updates   P(A fixed)  P(B fixed)  P(wild fixed)  P(segregating)  steps
++        8   0.000655    0.000655    0.022829       0.975861        405
++       32   0.083186    0.083186    0.258906       0.574723        1485
++      128   0.241410    0.241410    0.488545       0.028636        5805
++      512   0.250000    0.250000    0.500000       0.000000        23085
++     2048   0.250000    0.250000    0.500000       0.000000        92205
++
++population 16 (153 states), initial A = B = 4
++  updates   P(A fixed)  P(B fixed)  P(wild fixed)  P(segregating)  steps
++       16   0.000000    0.000000    0.000525       0.999475        2601
++       64   0.011914    0.011914    0.086702       0.889470        9945
++      256   0.179817    0.179817    0.405218       0.235148        39321
++     1024   0.249828    0.249828    0.499771       0.000574        156825
++     4096   0.250000    0.250000    0.500000       0.000000        626841
++
++population 32 (561 states), initial A = B = 8
++  updates   P(A fixed)  P(B fixed)  P(wild fixed)  P(segregating)  steps
++       32   0.000000    0.000000    0.000000       1.000000        18513
++      128   0.000227    0.000227    0.009444       0.990103        72369
++      512   0.070473    0.070473    0.233583       0.625472        287793
++     2048   0.240051    0.240051    0.486732       0.033166        1149489
++     8192   0.250000    0.250000    0.500000       0.000000        4596273
++
++population 32, 8192 updates, default budget: work_limit after 1000000 steps (candidate step budget reached)
++
++joint law, population 3 after 3 updates (state (a, b): probability):
++  (0, 0): 0.104252
++  (0, 1): 0.108368
++  (0, 2): 0.108368
++  (0, 3): 0.104252
++  (1, 0): 0.108368
++  (1, 1): 0.037037
++  (1, 2): 0.108368
++  (2, 0): 0.108368
++  (2, 1): 0.108368
++  (3, 0): 0.104252
+diff --git a/examples/python/outputs/optimize_fcmaes_cmaes.txt b/examples/python/outputs/optimize_fcmaes_cmaes.txt
+new file mode 100644
+index 0000000..65a4a7f
+--- /dev/null
++++ b/examples/python/outputs/optimize_fcmaes_cmaes.txt
+@@ -0,0 +1,6 @@
++CMA-ES: 928 evaluations in 58 generations, 0 penalized rows, 129 ms
++estimate beta 1.0914 gamma 0.3472 (truth [1.1, 0.35]), R0 3.144
++train MSE 0.0111 holdout MSE 0.0201
++at the truth: train MSE 0.0116 holdout MSE 0.0221
++observed: [3.0, 4.392, 5.661, 6.054, 5.801, 4.939, 4.023, 2.508, 1.686, 1.154, 0.553]
++fitted:   [3.0, 4.579, 5.688, 5.995, 5.651, 4.956, 4.147, 2.667, 1.608, 0.934, 0.529]
+diff --git a/examples/python/outputs/optimize_fcmaes_minimize.txt b/examples/python/outputs/optimize_fcmaes_minimize.txt
+new file mode 100644
+index 0000000..0dcb10b
+--- /dev/null
++++ b/examples/python/outputs/optimize_fcmaes_minimize.txt
+@@ -0,0 +1,5 @@
++bitecpp.minimize: 1500 evaluations, 18 penalized, 304 ms
++  beta 1.0914 gamma 0.3472 train MSE 0.0111 holdout MSE 0.0201
++cmaescpp.minimize: 736 evaluations, 0 penalized, 141 ms
++  beta 1.0914 gamma 0.3472 train MSE 0.0111 holdout MSE 0.0201
++truth: [1.1, 0.35]
+diff --git a/examples/python/outputs/optimize_scipy_de.txt b/examples/python/outputs/optimize_scipy_de.txt
+new file mode 100644
+index 0000000..93c075e
+--- /dev/null
++++ b/examples/python/outputs/optimize_scipy_de.txt
+@@ -0,0 +1,5 @@
++DE: 1830 rows scored in 61 score_matrix calls, 16 penalized rows, 51 ms
++DE best [0.700002, 0.400001] train MSE 9.415e-14
++Nelder-Mead polish [0.7, 0.4] train MSE 1.906e-29 (179 evaluations)
++traced replay: holdout MSE 7.351e-27 | FSP states 75 | FSP work 25936
++truth used to generate the packaged observations: [0.7, 0.4]
+diff --git a/examples/python/outputs/sir_design_comparison.txt b/examples/python/outputs/sir_design_comparison.txt
+new file mode 100644
+index 0000000..d4d2c44
+--- /dev/null
++++ b/examples/python/outputs/sir_design_comparison.txt
+@@ -0,0 +1,31 @@
++
++early (0-2): times [0.0, 0.5, 1.0, 1.5, 2.0, 2.5]
++  loss at truth 0.00e+00; peak expected infected 4.23
++  beta +10%                train MSE 3.338e-02
++  gamma +10%               train MSE 8.015e-03
++  both +10% (same R0)      train MSE 7.619e-03
++  beta +10%, gamma -10%    train MSE 7.969e-02
++  d mean / d beta : [0.0, 0.996, 2.131, 3.226, 4.12, 4.716]
++  d mean / d gamma: [0.0, -1.251, -2.997, -5.146, -7.523, -9.925]
++
++spread (0-10): times [0.0, 2.0, 4.0, 6.0, 8.0, 10.0]
++  loss at truth 0.00e+00; peak expected infected 4.50
++  beta +10%                train MSE 8.943e-02
++  gamma +10%               train MSE 1.284e-01
++  both +10% (same R0)      train MSE 2.924e-02
++  beta +10%, gamma -10%    train MSE 4.869e-01
++  d mean / d beta : [0.0, 4.12, 4.746, 2.822, 1.09, 0.141]
++  d mean / d gamma: [0.0, -7.523, -15.703, -18.319, -16.786, -13.627]
++
++late sparse: times [0.0, 6.0, 9.0, 12.0, 15.0, 18.0]
++  loss at truth 0.00e+00; peak expected infected 3.81
++  beta +10%                train MSE 1.286e-02
++  gamma +10%               train MSE 1.288e-01
++  both +10% (same R0)      train MSE 8.243e-02
++  beta +10%, gamma -10%    train MSE 2.611e-01
++  d mean / d beta : [0.0, 2.822, 0.526, -0.244, -0.328, -0.236]
++  d mean / d gamma: [0.0, -18.319, -15.293, -10.304, -6.233, -3.523]
++
++tolerance 1e-05: largest series tail bound 8.62e-06, FSP work 73410
++
++tolerance 1e-13: largest series tail bound 5.27e-14, FSP work 105730
+diff --git a/examples/python/outputs/sir_rate_landscape.txt b/examples/python/outputs/sir_rate_landscape.txt
+new file mode 100644
+index 0000000..a55635f
+--- /dev/null
++++ b/examples/python/outputs/sir_rate_landscape.txt
+@@ -0,0 +1,35 @@
++model: {'susceptible': 9, 'infected': 2, 'recovered': 1, 'train_count': 3}
++sample times: [0.0, 1.0, 2.0, 3.0, 5.0]
++evaluated 1681 rate pairs in 27.0 ms (16.0 us per candidate, 2 logical steps each)
++
++best grid points (training MSE of the expected infected count):
++  beta    gamma   R0      train MSE
++  0.7275  0.4150  1.753  1.616e-05
++  0.6600  0.3800  1.737  3.735e-05
++  0.7950  0.4500  1.767  1.790e-04
++  0.6375  0.3625  1.759  1.884e-04
++  0.7050  0.3975  1.774  1.974e-04
++  0.5925  0.3450  1.717  2.442e-04
++  0.5700  0.3275  1.740  2.678e-04
++  0.7725  0.4325  1.786  2.749e-04
++
++log10(train MSE), rows beta (top 0.30 to bottom 1.20), columns gamma 0.10 to 0.80:
++  beta 0.30   -1.4   -2.8   -1.4   -0.9   -0.6   -0.4   -0.3   -0.2   -0.1    0.0    0.1
++  beta 0.39   -0.8   -1.6   -2.5   -1.3   -0.8   -0.6   -0.4   -0.2   -0.1   -0.1    0.0
++  beta 0.48   -0.5   -1.0   -1.9   -2.1   -1.2   -0.8   -0.5   -0.4   -0.2   -0.1   -0.0
++  beta 0.57   -0.2   -0.6   -1.1   -2.5   -1.7   -1.0   -0.7   -0.5   -0.3   -0.2   -0.1
++  beta 0.66   -0.0   -0.3   -0.7   -1.4   -4.4   -1.5   -0.9   -0.6   -0.4   -0.3   -0.2
++  beta 0.75    0.2   -0.1   -0.4   -0.9   -1.8   -2.4   -1.3   -0.8   -0.6   -0.4   -0.2
++  beta 0.84    0.3    0.1   -0.2   -0.6   -1.1   -2.4   -1.8   -1.1   -0.7   -0.5   -0.3
++  beta 0.93    0.4    0.2   -0.1   -0.4   -0.8   -1.5   -2.9   -1.4   -0.9   -0.6   -0.4
++  beta 1.02    0.5    0.3    0.1   -0.2   -0.5   -1.0   -1.9   -2.0   -1.2   -0.8   -0.5
++  beta 1.11    0.6    0.4    0.2   -0.0   -0.3   -0.7   -1.3   -2.4   -1.5   -1.0   -0.7
++  beta 1.20    0.7    0.5    0.3    0.1   -0.2   -0.5   -1.0   -1.7   -1.9   -1.2   -0.8
++
++full replay of the best grid point [0.7275, 0.41500000000000004]
++  status complete score 1.616e-05 holdout MSE 1.534e-03
++  fitted infected means: [2.0, 2.1679, 2.1388, 1.9546, 1.3925]
++  observations:          [2.0, 2.1637, 2.1444, 1.9771, 1.4431]
++  largest series tail bound: 2.354856784572879e-12
++
++R0 across the best 1% of the grid: 1.697 to 1.797
+diff --git a/examples/python/sir_design_comparison.py b/examples/python/sir_design_comparison.py
+new file mode 100644
+index 0000000..e17d1fa
+--- /dev/null
++++ b/examples/python/sir_design_comparison.py
+@@ -0,0 +1,60 @@
++"""How well do different sampling designs pin down beta and gamma?
++
++Builds synthetic observations from known rates for three sampling designs,
++then measures how much the training loss rises when each rate, or both
++along the R0 = beta / gamma direction, moves by 10%. A design that barely
++changes the loss leaves that direction poorly identified. It also reports
++local sensitivities of the expected infected count and the FSP numerical
++diagnostics at two tolerances.
++"""
++
++import numpy as np
++
++from population_epidemiology import Prepared
++
++truth = np.array([0.9, 0.3])
++population = {"susceptible": 14, "infected": 2, "recovered": 0}
++designs = {
++    "early (0-2)": [0.0, 0.5, 1.0, 1.5, 2.0, 2.5],
++    "spread (0-10)": [0.0, 2.0, 4.0, 6.0, 8.0, 10.0],
++    "late sparse": [0.0, 6.0, 9.0, 12.0, 15.0, 18.0],
++}
++
++
++def sir(times, observations, tolerance=1e-11):
++    return {"kind": "sir", **population, "sample_times": times,
++            "observations": observations, "train_count": 4, "tolerance": tolerance}
++
++
++for name, times in designs.items():
++    # Synthetic data: the model's own expected infected counts at the truth.
++    reference = Prepared(sir(times, [0.0] * len(times)))
++    means = reference.evaluate(truth.tolist())["metrics"]["infected_means"]
++    prepared = Prepared(sir(times, means))
++    moves = {
++        "beta +10%": truth * [1.1, 1.0],
++        "gamma +10%": truth * [1.0, 1.1],
++        "both +10% (same R0)": truth * 1.1,
++        "beta +10%, gamma -10%": truth * [1.1, 0.9],
++    }
++    scores, statuses, _ = prepared.score_matrix([truth, *moves.values()])
++    assert set(statuses) == {"complete"}
++    print(f"\n{name}: times {times}")
++    print(f"  loss at truth {scores[0]:.2e}; peak expected infected {max(means):.2f}")
++    for label, value in zip(moves, scores[1:], strict=True):
++        print(f"  {label:24s} train MSE {value:.3e}")
++    # Local sensitivity of the expected infected count by central differences.
++    h = 1e-4
++    rows = [truth + [h, 0], truth - [h, 0], truth + [0, h], truth - [0, h]]
++    batch = prepared.batch([{"id": str(i), "parameters": r.tolist()} for i, r in enumerate(rows)])
++    m = [np.array(r["metrics"]["infected_means"]) for r in batch["records"]]
++    print("  d mean / d beta :", np.round((m[0] - m[1]) / (2 * h), 3).tolist())
++    print("  d mean / d gamma:", np.round((m[2] - m[3]) / (2 * h), 3).tolist())
++
++# Numerical diagnostics at a loose and a tight supported tolerance.
++times = designs["spread (0-10)"]
++for tolerance in (1e-5, 1e-13):
++    row = Prepared(sir(times, [0.0] * len(times), tolerance)).evaluate(truth.tolist())
++    tail = max(e["series_tail_upper_bound"] for e in row["metrics"]["error"])
++    print(f"\ntolerance {tolerance:g}: largest series tail bound {tail:.2e}, "
++          f"FSP work {row['metrics']['fsp_work']}")
+diff --git a/examples/python/sir_rate_landscape.py b/examples/python/sir_rate_landscape.py
+new file mode 100644
+index 0000000..149f986
+--- /dev/null
++++ b/examples/python/sir_rate_landscape.py
+@@ -0,0 +1,56 @@
++"""Which infection and recovery rates explain the packaged outbreak, and how sharply?
++
++Scans a 41 x 41 grid of (beta, gamma) through one ``score_matrix`` call,
++reports the best grid points with their basic reproduction number
++R0 = beta / gamma, prints a coarse log10-loss map and replays the winner
++with a full record to read its holdout error and fitted infected means.
++"""
++
++from time import perf_counter
++
++import numpy as np
++
++from population_epidemiology import Prepared, load_example
++
++case = load_example()
++model = case["model"]
++prepared = Prepared(model)
++print("model:", {k: model[k] for k in ("susceptible", "infected", "recovered", "train_count")})
++print("sample times:", model["sample_times"])
++
++betas = np.linspace(0.3, 1.2, 41)
++gammas = np.linspace(0.1, 0.8, 41)
++grid = np.array([(b, g) for b in betas for g in gammas])
++start = perf_counter()
++scores, statuses, steps = prepared.score_matrix(grid)
++elapsed = perf_counter() - start
++scores = np.array(scores)
++assert set(statuses) == {"complete"}, set(statuses)
++print(f"evaluated {len(grid)} rate pairs in {elapsed * 1e3:.1f} ms "
++      f"({elapsed / len(grid) * 1e6:.1f} us per candidate, {steps[0]} logical steps each)")
++
++order = np.argsort(scores)
++print("\nbest grid points (training MSE of the expected infected count):")
++print("  beta    gamma   R0      train MSE")
++for i in order[:8]:
++    b, g = grid[i]
++    print(f"  {b:.4f}  {g:.4f}  {b / g:.3f}  {scores[i]:.3e}")
++
++# Coarse map: log10 training loss on every fourth grid line.
++print("\nlog10(train MSE), rows beta (top 0.30 to bottom 1.20), columns gamma 0.10 to 0.80:")
++loss = np.log10(np.maximum(scores.reshape(len(betas), len(gammas)), 1e-30))
++for r in range(0, len(betas), 4):
++    print(f"  beta {betas[r]:.2f} " + " ".join(f"{loss[r, c]:6.1f}" for c in range(0, len(gammas), 4)))
++
++best = grid[order[0]]
++row = prepared.evaluate(best.tolist())
++metrics = row["metrics"]
++print("\nfull replay of the best grid point", best.tolist())
++print("  status", row["status"], "score", f"{row['score']:.3e}", "holdout MSE", f"{metrics['holdout_mse']:.3e}")
++print("  fitted infected means:", [round(m, 4) for m in metrics["infected_means"]])
++print("  observations:         ", [None if o is None else round(o, 4) for o in model["observations"]])
++print("  largest series tail bound:", max(e["series_tail_upper_bound"] for e in metrics["error"]))
++# Near-optimal pairs share R0: the valley runs along beta / gamma.
++near = order[: max(5, int(0.01 * len(grid)))]
++r0 = grid[near, 0] / grid[near, 1]
++print(f"\nR0 across the best 1% of the grid: {r0.min():.3f} to {r0.max():.3f}")
+diff --git a/pyproject.toml b/pyproject.toml
+index 5800d7f..cb21baf 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -4,7 +4,7 @@ build-backend = "maturin"
+ 
+ [project]
+ name = "population-epidemiology"
+-version = "0.2.0"
++version = "0.3.0"
+ requires-python = ">=3.10"
+ description = "Prepared population-epidemiology research evaluations"
+ 
+@@ -18,3 +18,6 @@ include = [
+   { path = "docs/*.md", format = "sdist" },
+   { path = "validation/*.py", format = "sdist" },
+ ]
++exclude = [
++  { path = "vendor/crn-craft/target/**/*", format = "sdist" },
++]
+diff --git a/validation/release_checks.py b/validation/release_checks.py
+index df483bd..3c73599 100644
+--- a/validation/release_checks.py
++++ b/validation/release_checks.py
+@@ -1,4 +1,10 @@
+-"""Check the installed lean API and run the Python snippets in the tutorial."""
++"""Check the installed lean and matrix APIs and run the Python blocks of the tutorial
++and the user manual.
++
++Usage: release_checks.py MODULE TUTORIAL [MANUAL]. MANUAL defaults to
++user-manual.md next to TUTORIAL. Each document's blocks run in order in one
++namespace.
++"""
+ 
+ import importlib
+ import json
+@@ -8,7 +14,8 @@ import re
+ import sys
+ from tempfile import TemporaryDirectory
+ 
+-module, tutorial = sys.argv[1:]
++module, tutorial = sys.argv[1:3]
++manual = sys.argv[3] if len(sys.argv) > 3 else str(Path(tutorial).with_name("user-manual.md"))
+ package = importlib.import_module(module)
+ example = package.load_example()
+ prepared = package.Prepared(example["model"])
+@@ -85,11 +92,20 @@ if numpy is not None:
+     array = numpy.array([example["parameters"]] * 3)
+     assert prepared.score_matrix(array) == prepared.score_matrix(array.tolist())
+ 
+-snippets = re.findall(r"^```python\n(.*?)^```", Path(tutorial).read_text(), re.M | re.S)
+-assert len(snippets) >= 4
+-namespace = {}
+-for i, snippet in enumerate(snippets, 1):
+-    exec(compile(snippet, f"tutorial-{i}", "exec"), namespace)
+-print(json.dumps({"status": "passed", "tutorial_python_blocks": len(snippets),
++
++
++def run_blocks(path, label, minimum):
++    snippets = re.findall(r"^```python\n(.*?)^```", Path(path).read_text(), re.M | re.S)
++    assert len(snippets) >= minimum, (path, len(snippets))
++    namespace = {}
++    for i, snippet in enumerate(snippets, 1):
++        exec(compile(snippet, f"{label}-{i}", "exec"), namespace)
++    return len(snippets)
++
++
++snippets = run_blocks(tutorial, "tutorial", 4)
++manual_blocks = run_blocks(manual, "manual", 15)
++print(json.dumps({"status": "passed", "tutorial_python_blocks": snippets,
++                  "manual_python_blocks": manual_blocks,
+                   "lean_api_and_budget_parity": True, "matrix_api_parity": True,
+                   "numpy_matrix_input": numpy is not None}))
+-- 
+2.43.0
+

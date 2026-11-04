@@ -1,0 +1,253 @@
+From 900fce157791691525776760cf29fa68429fabea Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 4 Nov 2026 12:03:21 -0400
+Subject: [PATCH 08/12] Round 8: Store SIR generator columns as three fixed
+ slots
+
+Every SIR generator column holds its diagonal plus at most one infection
+source and one recovery source. Store each column as three (source, kind)
+slots in ascending source order, padded after the real entries with zero
+weights, and handle the escaping sink after the loop, so the product has
+no inner loop bounds or per-column sink branch. A padded slot adds +0.0 to
+a non-negative sum and the first product equals 0.0 + product, so each
+column's additions are unchanged; the projection tests still match the
+vendored solver bit for bit.
+
+Workload: serial (96 SIR candidates, one worker), matrix API on both
+sides, 11 samples.
+Before median: 3.025 ms. After median: 1.532 ms. Speedup: 1.97x.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ evidence/performance-0.3.0/plan.md            | 26 ++++++
+ .../round08-matrix-serial.json                | 36 ++++++++
+ src/sir_fsp.rs                                | 83 ++++++++++++-------
+ 3 files changed, 116 insertions(+), 29 deletions(-)
+ create mode 100644 evidence/performance-0.3.0/round08-matrix-serial.json
+
+diff --git a/evidence/performance-0.3.0/plan.md b/evidence/performance-0.3.0/plan.md
+index 7a87e3d..5b198ff 100644
+--- a/evidence/performance-0.3.0/plan.md
++++ b/evidence/performance-0.3.0/plan.md
+@@ -218,3 +218,29 @@ transitions and 65 updates, about 92 us per case.
+   byte, traced and untraced, with and without holdout points.
+ - Result: 1.090 ms before, 0.817 ms after, 1.33x (`round07-trace.json`).
+   Kept. The traced CLI request still prints the 0.2.0 bytes.
++
++## Round 8: fixed-width SIR generator columns
++
++- Change: every SIR generator column has at most three entries (its
++  diagonal, the infection source and the recovery source). Store each
++  column as three (source, kind) slots in ascending source order, padded
++  after the real entries with zero weights, and handle the escaping sink
++  after the loop. The product then has no inner loop bounds or per-column
++  sink branch. A padded slot adds +0.0 to a non-negative sum, and the
++  first real product equals `0.0 + product`, so every column's additions
++  are unchanged.
++- Workload: `serial` through the matrix API, round 7 against this round.
++- Expected effect: 1.2x to 1.4x on the uniformization kernel, which is
++  most of a lean SIR candidate.
++- Decision: the brief's rule. The bit-for-bit projection tests against
++  the vendored solver must keep passing.
++- Result: 3.025 ms before, 1.532 ms after, 1.97x
++  (`round08-matrix-serial.json`). Kept. The projection tests still match
++  the vendored solver bit for bit.
++- Noise note (diagnostic only, not a decision): the round 7 "before"
++  median was higher than round 2's "after" median, so rounds 2 to 7 were
++  re-paired on matrix serial with 5 to 7 samples. Two consecutive 7-sample
++  pairs of the same round 4 and round 5 binaries gave 0.78x and 1.07x, and
++  single runs of one binary ranged from 2.4 to 4.1 ms. Absolute times on
++  this shared 2-vCPU host drift in phases, so only within-pair ratios are
++  used.
+diff --git a/evidence/performance-0.3.0/round08-matrix-serial.json b/evidence/performance-0.3.0/round08-matrix-serial.json
+new file mode 100644
+index 0000000..b743f10
+--- /dev/null
++++ b/evidence/performance-0.3.0/round08-matrix-serial.json
+@@ -0,0 +1,36 @@
++{
++  "workload": "serial",
++  "before_mode": "matrix",
++  "after_mode": "matrix",
++  "before_seconds": [
++    0.00298245125,
++    0.00302882975,
++    0.002979115,
++    0.0030219545,
++    0.003024602,
++    0.00324466725,
++    0.00370089025,
++    0.00327629175,
++    0.0031066035,
++    0.0030106075,
++    0.002805639
++  ],
++  "after_seconds": [
++    0.00150058275,
++    0.0015316435,
++    0.00151329175,
++    0.00151335275,
++    0.0015096445,
++    0.001571102,
++    0.002029561,
++    0.00189009675,
++    0.001532391,
++    0.0015407865,
++    0.00138895175
++  ],
++  "medians_seconds": [
++    0.003024602,
++    0.0015316435
++  ],
++  "speedup": 1.9747428171111618
++}
+diff --git a/src/sir_fsp.rs b/src/sir_fsp.rs
+index 0e79e9f..56775dd 100644
+--- a/src/sir_fsp.rs
++++ b/src/sir_fsp.rs
+@@ -30,11 +30,12 @@ pub struct Projection {
+     /// Target state of each state's infection and recovery transition.
+     infection: Vec<Option<usize>>,
+     recovery: Vec<Option<usize>>,
+-    /// Column-ordered generator: incoming entries of each target in
+-    /// ascending source order, with the diagonal at its own position and the
+-    /// escaping sink last (it has no incoming edges here).
+-    start: Vec<usize>,
+-    entries: Vec<(usize, Entry)>,
++    /// Column-ordered generator: the incoming entries of each target state
++    /// in ascending source order, with the diagonal at its own position,
++    /// padded after the real entries to three slots. The escaping sink has
++    /// no incoming edges here.
++    sources: Vec<[usize; 3]>,
++    kinds: Vec<[Entry; 3]>,
+     edges: usize,
+     times: Vec<f64>,
+     tolerance: f64,
+@@ -45,6 +46,8 @@ enum Entry {
+     Diagonal,
+     Infection,
+     Recovery,
++    /// A zero weight after the real entries of a column.
++    Padding,
+ }
+ 
+ /// How much of a solution to record.
+@@ -131,14 +134,31 @@ impl Projection {
+                 fill[target] += 1;
+             }
+         }
++        // A column holds its diagonal plus at most one infection source
++        // (S + 1, I - 1) and one recovery source (I + 1, R - 1).
++        assert_eq!(start[n], start[n + 1], "no transition reaches the sink");
++        let mut sources = Vec::with_capacity(n);
++        let mut kinds = Vec::with_capacity(n);
++        for (c, bounds) in start[..=n].windows(2).enumerate() {
++            let column = &entries[bounds[0]..bounds[1]];
++            assert!(column.len() <= 3, "SIR columns have at most three entries");
++            let mut slot_sources = [c; 3];
++            let mut slot_kinds = [Entry::Padding; 3];
++            for (k, &(source, kind)) in column.iter().enumerate() {
++                slot_sources[k] = source;
++                slot_kinds[k] = kind;
++            }
++            sources.push(slot_sources);
++            kinds.push(slot_kinds);
++        }
+         Self {
+             susceptible: states.iter().map(|x| x[0] as f64).collect(),
+             infected: states.iter().map(|x| x[1] as f64).collect(),
+             infection,
+             recovery,
+-            start,
++            sources,
++            kinds,
+             edges: entries.len() - n,
+-            entries,
+             times: times.to_vec(),
+             tolerance,
+             counts: states,
+@@ -251,16 +271,17 @@ impl Projection {
+                 }
+             }
+         }
+-        let columns: Vec<(usize, f64)> = self
+-            .entries
++        let weights: Vec<[f64; 3]> = self
++            .kinds
+             .iter()
+-            .map(|&(source, kind)| {
+-                let weight = match kind {
+-                    Entry::Diagonal => diagonal[source],
+-                    Entry::Infection => infection_rate[source],
+-                    Entry::Recovery => recovery_rate[source],
+-                };
+-                (source, weight)
++            .zip(&self.sources)
++            .map(|(kinds, sources)| {
++                [0, 1, 2].map(|k| match kinds[k] {
++                    Entry::Diagonal => diagonal[sources[k]],
++                    Entry::Infection => infection_rate[sources[k]],
++                    Entry::Recovery => recovery_rate[sources[k]],
++                    Entry::Padding => 0.0,
++                })
+             })
+             .collect();
+         // Discovery visits every state and every reaction once.
+@@ -302,8 +323,8 @@ impl Projection {
+                             break;
+                         }
+                         multiply_accumulate(
+-                            &self.start,
+-                            &columns,
++                            &self.sources,
++                            &weights,
+                             &term,
+                             &mut next,
+                             &mut result,
+@@ -391,28 +412,32 @@ fn omitted_weight(first_weight: f64, mu: f64, first: u64) -> f64 {
+ 
+ /// One series term, `next = term · P`, with the sink (index n) keeping its
+ /// mass, fused with `result += weight * next`, as in the vendored solver.
++/// The vendored solver starts each column at 0.0 and adds its entries in
++/// ascending source order; `0.0 + x` is `x` and a padded slot adds +0.0 to a
++/// non-negative sum, so each column's value is bitwise unchanged.
+ fn multiply_accumulate(
+-    start: &[usize],
+-    entries: &[(usize, f64)],
++    sources: &[[usize; 3]],
++    weights: &[[f64; 3]],
+     term: &[f64],
+     next: &mut [f64],
+     result: &mut [f64],
+     weight: f64,
+ ) {
+-    let n = start.len() - 2;
+-    for (c, ((out, total), bounds)) in next
++    let n = sources.len();
++    for (((out, total), source), w) in next[..n]
+         .iter_mut()
+-        .zip(result.iter_mut())
+-        .zip(start.windows(2))
+-        .enumerate()
++        .zip(&mut result[..n])
++        .zip(sources)
++        .zip(weights)
+     {
+-        let mut sum = if c == n { term[n] } else { 0.0 };
+-        for &(i, rate) in &entries[bounds[0]..bounds[1]] {
+-            sum += term[i] * rate;
+-        }
++        let mut sum = term[source[0]] * w[0];
++        sum += term[source[1]] * w[1];
++        sum += term[source[2]] * w[2];
+         *out = sum;
+         *total += weight * sum;
+     }
++    next[n] = term[n];
++    result[n] += weight * term[n];
+ }
+ 
+ #[cfg(test)]
+-- 
+2.43.0
+

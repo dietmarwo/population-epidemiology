@@ -1,0 +1,877 @@
+From 61db6b118895dfebd9408d334b8b56828c5e904c Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 4 Nov 2026 11:38:07 -0400
+Subject: [PATCH 01/12] Round 1: Add the typed score-matrix API
+
+Add Prepared::score_matrix and MatrixScore, which evaluate untraced
+row-major parameter vectors without candidate or record JSON. Budget
+parsing, limits, worker dispatch, deadlines, cancellation and failure
+classification are shared with scores_json through one dispatch helper.
+The Python extension gains a GIL-free score_matrix native method and
+Prepared.score_matrix accepts lists of lists or 2-D NumPy arrays.
+The benchmark gains a CRAFT_MATRIX API mode, performance_pair.py gains
+--before-matrix/--after-matrix (metrics and detail normalized to null)
+and optimize_performance.py gains --matrix.
+
+Workload: serial (96 SIR candidates, one worker), lean scores_json
+before, matrix after, 11 samples.
+Before median: 14.611 ms. After median: 13.288 ms. Speedup: 1.10x.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ evidence/performance-0.3.0/plan.md            |  59 ++++
+ .../round01-matrix-serial.json                |  36 ++
+ examples/performance.rs                       |  56 ++-
+ python/population_epidemiology/__init__.py    |  15 +
+ src/domain.rs                                 |  14 +-
+ src/lib.rs                                    | 322 +++++++++++++++---
+ validation/optimize_performance.py            |  12 +-
+ validation/performance_pair.py                |  19 +-
+ validation/release_checks.py                  |  33 +-
+ 9 files changed, 504 insertions(+), 62 deletions(-)
+ create mode 100644 evidence/performance-0.3.0/plan.md
+ create mode 100644 evidence/performance-0.3.0/round01-matrix-serial.json
+
+diff --git a/evidence/performance-0.3.0/plan.md b/evidence/performance-0.3.0/plan.md
+new file mode 100644
+index 0000000..48b722b
+--- /dev/null
++++ b/evidence/performance-0.3.0/plan.md
+@@ -0,0 +1,59 @@
++# population-epidemiology 0.3.0 performance plan
++
++Host: 2 vCPUs, Intel(R) Xeon(R) Processor @ 2.10GHz (KVM), Rust 1.97.0,
++CPython 3.12. Every timing runs inside `/home/claude/craft5/cpu.lock`.
++Each entry below is written before the round is timed. The decision rule
++is the brief's: keep a round when the declared workload's median speedup
++under `validation/performance_pair.py --samples 11` against the previous
++kept binary is at least 1.03x and the paired output check passes.
++Otherwise revert it and record it under `rejected/`.
++
++## Profile before round 1 (0.2.0 code on this host)
++
++Single SIR candidate (example fixture, 12 individuals, 5 sample times),
++phase times from a scratch harness that calls the vendored CRN-craft API:
++
++| Phase | us |
++| --- | ---: |
++| Build model JSON (`json!` + `to_string`) | 5.6 |
++| Build run JSON incl. model SHA-256 | 4.3 |
++| `check_bytes` (hash, parse, validate model and run) | 32.7 |
++| `parse_model` + `parse_run` (again inside `solve`) | 25.8 |
++| `CompiledNetwork::compile` | 8.6 |
++| Output-length serialization of `FspResult` | 13.6 |
++| `fsp::solve` total | 159.3 |
++| `scores_json`, one candidate | 172.7 |
++| `evaluate_json`, one candidate | 202.3 |
++| `scores_json`, one invalid candidate | 0.8 |
++
++The projection has 75 states and 119 edges and charges 25,936 FSP work
++units, so the uniformization arithmetic is roughly 25 us of the 159 us.
++The rest is per-candidate JSON construction, validation, parsing,
++compilation, BTreeMap state discovery and result-size serialization.
++The JSON API boundary is about 1 us per candidate.
++
++## Round 1: typed score-matrix API (required by the brief)
++
++- Change: `Prepared::score_matrix`, `MatrixScore`, a Python native
++  `score_matrix` that releases the GIL, the Python wrapper, a `matrix`
++  API mode in `examples/performance.rs` (`CRAFT_MATRIX=1`), matrix flags in
++  `validation/performance_pair.py` and `--matrix` in
++  `validation/optimize_performance.py`.
++- Workload (fixed by the brief): `serial`, lean `scores_json` before,
++  matrix after.
++- Expected effect: about 1.00x to 1.01x. Serial is 96 SIR candidates at
++  about 170 us each, and the matrix API only removes the roughly 1 us per
++  candidate JSON boundary.
++- Decision: the brief's rule. Because the brief requires this API as
++  round 1 and later steps depend on it, a ratio below 1.03x does not
++  revert it. In that case the round is recorded as a mandated round below
++  the threshold, it does not count toward the ten threshold rounds, and
++  one extra round follows so that ten kept rounds meet the threshold.
++- Result: lean 14.611 ms before, matrix 13.288 ms after, 1.10x
++  (`round01-matrix-serial.json`). Kept under the brief's rule, so no extra
++  round is needed. The gain is larger than the ~1 us per candidate JSON
++  boundary seen in the single-candidate profile. An alternating
++  single-candidate check showed equal per-call cost, so the batch gain
++  comes from not decoding, holding and encoding 96 candidate records
++  around the allocation-heavy SIR evaluations; host noise in diagnostic
++  reruns was about +/-5%.
+diff --git a/evidence/performance-0.3.0/round01-matrix-serial.json b/evidence/performance-0.3.0/round01-matrix-serial.json
+new file mode 100644
+index 0000000..b2d5fbd
+--- /dev/null
++++ b/evidence/performance-0.3.0/round01-matrix-serial.json
+@@ -0,0 +1,36 @@
++{
++  "workload": "serial",
++  "before_mode": "scores",
++  "after_mode": "matrix",
++  "before_seconds": [
++    0.01692924025,
++    0.01940525475,
++    0.014473168,
++    0.01349064825,
++    0.01356678825,
++    0.0147278805,
++    0.0147472105,
++    0.01407875225,
++    0.01543641,
++    0.01461146675,
++    0.013932439
++  ],
++  "after_seconds": [
++    0.01363757875,
++    0.0153604225,
++    0.012304013,
++    0.01308893525,
++    0.0143600335,
++    0.01444190475,
++    0.0127007055,
++    0.0124882845,
++    0.0146750175,
++    0.0132884255,
++    0.0128940615
++  ],
++  "medians_seconds": [
++    0.01461146675,
++    0.0132884255
++  ],
++  "speedup": 1.099563432101117
++}
+diff --git a/examples/performance.rs b/examples/performance.rs
+index bf58082..c6548c8 100644
+--- a/examples/performance.rs
++++ b/examples/performance.rs
+@@ -1,7 +1,12 @@
+-use population_epidemiology::Prepared;
++use population_epidemiology::{MatrixScore, Prepared};
+ use serde_json::{Value, json};
+ use std::{hint::black_box, time::Instant};
+ 
++enum Output {
++    Json(String),
++    Matrix(Vec<MatrixScore>),
++}
++
+ fn main() {
+     let mut args = std::env::args().skip(1);
+     let example = std::fs::read_to_string(args.next().expect("example JSON")).unwrap();
+@@ -39,20 +44,59 @@ fn main() {
+             json!({"id": format!("candidate-{i:04}"), "parameters": values, "trace": traced})
+         })
+         .collect();
++    let rows: Vec<Vec<f64>> = candidates
++        .iter()
++        .map(|c| serde_json::from_value(c["parameters"].clone()).unwrap())
++        .collect();
++    let flat = rows.concat();
+     let candidates = serde_json::to_string(&candidates).unwrap();
+     let budget = json!({"workers":workers}).to_string();
+     let evaluator = Prepared::new(&model.to_string()).unwrap();
+     let lean = std::env::var_os("CRAFT_SCORES").is_some();
+-    let evaluate = || {
+-        if lean {
+-            evaluator.scores_json(&candidates, &budget)
++    // CRAFT_MATRIX selects the typed score-matrix API for untraced workloads.
++    let matrix = std::env::var_os("CRAFT_MATRIX").is_some();
++    assert!(
++        !(matrix && traced),
++        "the matrix API evaluates untraced candidates"
++    );
++    let evaluate = || -> Result<Output, String> {
++        if matrix {
++            evaluator
++                .score_matrix(count, &flat, &budget)
++                .map(Output::Matrix)
++        } else if lean {
++            evaluator
++                .scores_json(&candidates, &budget)
++                .map(Output::Json)
+         } else {
+-            evaluator.evaluate_json(&candidates, &budget)
++            evaluator
++                .evaluate_json(&candidates, &budget)
++                .map(Output::Json)
+         }
+     };
+     let first = evaluate().unwrap();
+     if args.next().as_deref() == Some("probe") {
+-        println!("{first}");
++        match first {
++            Output::Json(text) => println!("{text}"),
++            // Records comparable to `scores_json`, without metrics or detail.
++            Output::Matrix(scores) => {
++                let records: Vec<_> = scores
++                    .iter()
++                    .enumerate()
++                    .map(|(i, row)| {
++                        json!({"id": format!("candidate-{i:04}"), "status": row.status,
++                               "steps": row.steps, "score": row.score,
++                               "metrics": null, "detail": null})
++                    })
++                    .collect();
++                println!(
++                    "{}",
++                    json!({"model_sha256": evaluator.model_sha256(), "records": records,
++                           "schema": "population-epidemiology.result/0.1",
++                           "version": env!("CARGO_PKG_VERSION")})
++                );
++            }
++        }
+         return;
+     }
+     black_box(first);
+diff --git a/python/population_epidemiology/__init__.py b/python/population_epidemiology/__init__.py
+index a154ddf..4ead679 100644
+--- a/python/population_epidemiology/__init__.py
++++ b/python/population_epidemiology/__init__.py
+@@ -21,6 +21,21 @@ class Prepared:
+         """Return ordered objectives and statuses for untraced candidates."""
+         return json.loads(self._native.scores(_encode(candidates), _encode(budget)))
+ 
++    def score_matrix(self, rows, **budget):
++        """Score untraced parameter rows without JSON candidates or records.
++
++        ``rows`` is a list of equal-length lists or a 2-D NumPy array, one row
++        per candidate. Returns ``(scores, statuses, steps)`` as three lists in
++        row order. A score is NaN unless its status is ``"complete"``. The
++        budget keywords are the same as for ``scores``.
++        """
++        if hasattr(rows, "ndim"):
++            if rows.ndim != 2:
++                raise ValueError("score_matrix expects a 2-D array of parameter rows")
++            rows = rows.tolist()
++        scores, statuses, steps = self._native.score_matrix(rows, _encode(budget))
++        return scores, statuses, steps
++
+     def evaluate(self, parameters, *, trace=False, **budget):
+         return self.batch([{"id": "one", "parameters": parameters, "trace": trace}], **budget)[
+             "records"
+diff --git a/src/domain.rs b/src/domain.rs
+index fb2fcc4..cd335ac 100644
+--- a/src/domain.rs
++++ b/src/domain.rs
+@@ -1,4 +1,4 @@
+-use crate::{Candidate, Evaluation, Work, infeasible, invalid};
++use crate::{Evaluation, Work, infeasible, invalid};
+ use serde::Deserialize;
+ use serde_json::{Value, json};
+ 
+@@ -133,7 +133,7 @@ pub fn prepare(input: Input) -> Result<Model, String> {
+     })
+ }
+ 
+-pub fn evaluate(model: &Model, c: &Candidate, work: &mut Work<'_>) -> Evaluation {
++pub fn evaluate(model: &Model, parameters: &[f64], trace: bool, work: &mut Work<'_>) -> Evaluation {
+     match &model.input {
+         Input::Sir {
+             susceptible,
+@@ -144,7 +144,7 @@ pub fn evaluate(model: &Model, c: &Candidate, work: &mut Work<'_>) -> Evaluation
+             train_count,
+             tolerance,
+         } => {
+-            let &[beta, gamma] = c.parameters.as_slice() else {
++            let &[beta, gamma] = parameters else {
+                 return Err(invalid("expected beta and gamma per time unit"));
+             };
+             if ![beta, gamma].iter().all(|v| (0.0..=5.0).contains(v)) {
+@@ -211,7 +211,7 @@ pub fn evaluate(model: &Model, c: &Candidate, work: &mut Work<'_>) -> Evaluation
+                 train,
+                 work.metrics(|| json!({"infected_means":means,"holdout_mse":holdout,"error":errors,
+                 "fsp_work":fsp_work,"numerical_error_certified":certified,"crn_model_sha256":model_hash,
+-                "crn_run_sha256":run_hash,"fsp":c.trace.then_some(out)})),
++                "crn_run_sha256":run_hash,"fsp":trace.then_some(out)})),
+             ))
+         }
+         Input::Moran {
+@@ -219,19 +219,19 @@ pub fn evaluate(model: &Model, c: &Candidate, work: &mut Work<'_>) -> Evaluation
+             updates,
+             ..
+         } => {
+-            if !c.parameters.is_empty() {
++            if !parameters.is_empty() {
+                 return Err(invalid("neutral Moran has no candidate parameters"));
+             }
+             moran(
+                 model.moran.as_ref().expect("prepared transitions"),
+                 *population,
+                 *updates,
+-                c.trace,
++                trace,
+                 work,
+             )
+         }
+         Input::Calendar { .. } => {
+-            if !c.parameters.is_empty() {
++            if !parameters.is_empty() {
+                 return Err(invalid("calendar rates come from the model"));
+             }
+             let boundaries = &model.calendar;
+diff --git a/src/lib.rs b/src/lib.rs
+index 17bd6a0..111d117 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -138,6 +138,16 @@ impl Work<'_> {
+     }
+ }
+ 
++/// One untraced candidate's outcome from `Prepared::score_matrix`.
++#[derive(Clone, Debug, PartialEq)]
++pub struct MatrixScore {
++    /// Same strings as the JSON records.
++    pub status: &'static str,
++    pub steps: u64,
++    /// `Some` only for `"complete"`.
++    pub score: Option<f64>,
++}
++
+ #[derive(Serialize)]
+ struct Record<'a> {
+     id: &'a str,
+@@ -188,6 +198,52 @@ impl Prepared {
+         self.evaluate_encoded(candidates, budget, false)
+     }
+ 
++    /// Evaluate `rows` untraced candidates whose parameters are stored row-major in
++    /// `parameters`. Each row has `parameters.len() / rows` values; dimension 0 is
++    /// allowed. Budget JSON, limits, worker dispatch, deadlines, cancellation and
++    /// failure classification are the same as `scores_json`.
++    pub fn score_matrix(
++        &self,
++        rows: usize,
++        parameters: &[f64],
++        budget: &str,
++    ) -> Result<Vec<MatrixScore>, String> {
++        if !(1..=4096).contains(&rows) {
++            return Err("matrix rows must be in 1..=4096".into());
++        }
++        if !parameters.len().is_multiple_of(rows) {
++            return Err("parameter count is not a multiple of the row count".into());
++        }
++        let dimension = parameters.len() / rows;
++        if dimension > 64 {
++            return Err("parameter vector exceeds limit".into());
++        }
++        let budget: Budget = serde_json::from_str(budget).map_err(|e| e.to_string())?;
++        check_budget(&budget, rows)?;
++        let deadline = deadline(&budget);
++        Ok(dispatch(rows, budget.workers, |index| {
++            let row = &parameters[index * dimension..(index + 1) * dimension];
++            let (result, steps) = self.outcome(row, false, &budget, deadline, false);
++            match result {
++                Ok((score, _)) => MatrixScore {
++                    status: "complete",
++                    steps,
++                    score: Some(score),
++                },
++                Err(e) => MatrixScore {
++                    status: e.status,
++                    steps,
++                    score: None,
++                },
++            }
++        }))
++    }
++
++    /// SHA-256 of the exact model bytes passed to `Prepared::new`.
++    pub fn model_sha256(&self) -> &str {
++        &self.model_sha256
++    }
++
+     fn evaluate_encoded(
+         &self,
+         candidates: Vec<Candidate>,
+@@ -198,13 +254,15 @@ impl Prepared {
+             .map_err(|e| e.to_string())
+     }
+ 
+-    fn record<'a>(
++    /// Run one candidate and return its checked result and logical step count.
++    fn outcome(
+         &self,
+-        c: &'a Candidate,
++        parameters: &[f64],
++        trace: bool,
+         budget: &Budget,
+         deadline: Option<Instant>,
+         metrics_enabled: bool,
+-    ) -> Record<'a> {
++    ) -> (Evaluation, u64) {
+         let mut work = Work {
+             budget,
+             deadline,
+@@ -212,7 +270,7 @@ impl Prepared {
+             metrics_enabled,
+             monitored: deadline.is_some() || budget.cancel_file.is_some(),
+         };
+-        let result = domain::evaluate(&self.model, c, &mut work);
++        let result = domain::evaluate(&self.model, parameters, trace, &mut work);
+         let result = result.and_then(|(score, metrics)| {
+             if score.is_finite() {
+                 Ok((score, metrics))
+@@ -220,11 +278,23 @@ impl Prepared {
+                 Err(invalid("nonfinite objective"))
+             }
+         });
++        (result, work.used)
++    }
++
++    fn record<'a>(
++        &self,
++        c: &'a Candidate,
++        budget: &Budget,
++        deadline: Option<Instant>,
++        metrics_enabled: bool,
++    ) -> Record<'a> {
++        let (result, steps) =
++            self.outcome(&c.parameters, c.trace, budget, deadline, metrics_enabled);
+         match result {
+             Ok((score, metrics)) => Record {
+                 id: &c.id,
+                 status: "complete",
+-                steps: work.used,
++                steps,
+                 score: Some(score),
+                 metrics: Some(metrics),
+                 detail: None,
+@@ -232,7 +302,7 @@ impl Prepared {
+             Err(e) => Record {
+                 id: &c.id,
+                 status: e.status,
+-                steps: work.used,
++                steps,
+                 score: None,
+                 metrics: if metrics_enabled { e.metrics } else { None },
+                 detail: Some(e.detail),
+@@ -246,14 +316,7 @@ impl Prepared {
+         budget: Budget,
+         metrics_enabled: bool,
+     ) -> Result<Batch<'a>, String> {
+-        if !(1..=64).contains(&budget.workers)
+-            || !(1..=100_000_000).contains(&budget.max_steps)
+-            || budget.wall_ms.is_some_and(|n| n == 0 || n > 86_400_000)
+-            || candidates.is_empty()
+-            || candidates.len() > 4096
+-        {
+-            return Err("invalid budget or batch size".into());
+-        }
++        check_budget(&budget, candidates.len())?;
+         let mut seen = HashSet::with_capacity(candidates.len());
+         for c in candidates {
+             if c.id.is_empty() || c.id.len() > 128 || !seen.insert(&c.id) || c.parameters.len() > 64
+@@ -266,36 +329,10 @@ impl Prepared {
+         if candidates.iter().filter(|c| c.trace).count() > 16 {
+             return Err("at most 16 traced candidates per batch".into());
+         }
+-        let deadline = budget
+-            .wall_ms
+-            .map(|n| Instant::now() + Duration::from_millis(n));
+-        let records: Vec<_> = if budget.workers == 1 || candidates.len() == 1 {
+-            candidates
+-                .iter()
+-                .map(|c| self.record(c, &budget, deadline, metrics_enabled))
+-                .collect()
+-        } else {
+-            let next = AtomicUsize::new(0);
+-            let slots: Vec<_> = (0..candidates.len()).map(|_| OnceLock::new()).collect();
+-            std::thread::scope(|scope| {
+-                for _ in 0..budget.workers.min(candidates.len()) {
+-                    scope.spawn(|| {
+-                        loop {
+-                            let index = next.fetch_add(1, Ordering::Relaxed);
+-                            let Some(c) = candidates.get(index) else {
+-                                break;
+-                            };
+-                            let record = self.record(c, &budget, deadline, metrics_enabled);
+-                            assert!(slots[index].set(record).is_ok(), "duplicate work index");
+-                        }
+-                    });
+-                }
+-            });
+-            slots
+-                .into_iter()
+-                .map(|slot| slot.into_inner().expect("missing evaluation"))
+-                .collect()
+-        };
++        let deadline = deadline(&budget);
++        let records = dispatch(candidates.len(), budget.workers, |index| {
++            self.record(&candidates[index], &budget, deadline, metrics_enabled)
++        });
+         Ok(Batch {
+             model_sha256: &self.model_sha256,
+             records,
+@@ -305,6 +342,55 @@ impl Prepared {
+     }
+ }
+ 
++fn check_budget(budget: &Budget, count: usize) -> Result<(), String> {
++    if !(1..=64).contains(&budget.workers)
++        || !(1..=100_000_000).contains(&budget.max_steps)
++        || budget.wall_ms.is_some_and(|n| n == 0 || n > 86_400_000)
++        || count == 0
++        || count > 4096
++    {
++        return Err("invalid budget or batch size".into());
++    }
++    Ok(())
++}
++
++fn deadline(budget: &Budget) -> Option<Instant> {
++    budget
++        .wall_ms
++        .map(|n| Instant::now() + Duration::from_millis(n))
++}
++
++/// Evaluate `count` indexes inline or on scoped workers and return results in index order.
++fn dispatch<T: Send + Sync>(
++    count: usize,
++    workers: usize,
++    evaluate: impl Fn(usize) -> T + Sync,
++) -> Vec<T> {
++    if workers == 1 || count == 1 {
++        return (0..count).map(evaluate).collect();
++    }
++    let next = AtomicUsize::new(0);
++    let slots: Vec<_> = (0..count).map(|_| OnceLock::new()).collect();
++    std::thread::scope(|scope| {
++        for _ in 0..workers.min(count) {
++            scope.spawn(|| {
++                loop {
++                    let index = next.fetch_add(1, Ordering::Relaxed);
++                    if index >= count {
++                        break;
++                    }
++                    let result = evaluate(index);
++                    assert!(slots[index].set(result).is_ok(), "duplicate work index");
++                }
++            });
++        }
++    });
++    slots
++        .into_iter()
++        .map(|slot| slot.into_inner().expect("missing evaluation"))
++        .collect()
++}
++
+ #[derive(Deserialize)]
+ #[serde(deny_unknown_fields)]
+ struct Request {
+@@ -355,6 +441,33 @@ mod python {
+             py.detach(|| self.0.evaluate_json(&candidates, &budget))
+                 .map_err(PyValueError::new_err)
+         }
++        /// Score untraced parameter rows. Returns scores (NaN unless complete),
++        /// statuses and logical steps in row order.
++        fn score_matrix(
++            &self,
++            py: Python<'_>,
++            rows: Vec<Vec<f64>>,
++            budget: String,
++        ) -> PyResult<(Vec<f64>, Vec<&'static str>, Vec<u64>)> {
++            let dimension = rows.first().map_or(0, Vec::len);
++            if rows.iter().any(|row| row.len() != dimension) {
++                return Err(PyValueError::new_err("ragged parameter rows"));
++            }
++            let count = rows.len();
++            let flat = rows.concat();
++            let rows = py
++                .detach(|| self.0.score_matrix(count, &flat, &budget))
++                .map_err(PyValueError::new_err)?;
++            let mut scores = Vec::with_capacity(count);
++            let mut statuses = Vec::with_capacity(count);
++            let mut steps = Vec::with_capacity(count);
++            for row in rows {
++                scores.push(row.score.unwrap_or(f64::NAN));
++                statuses.push(row.status);
++                steps.push(row.steps);
++            }
++            Ok((scores, statuses, steps))
++        }
+     }
+ 
+     #[pymodule]
+@@ -416,6 +529,127 @@ mod tests {
+         assert!(prepared.scores_json(&candidates.to_string(), "{}").is_err());
+     }
+ 
++    /// Compare every matrix row with the `scores_json` record for the same vector.
++    fn assert_matrix_matches_scores(model: &Value, rows: &[Vec<f64>], budget: &str) {
++        let prepared = Prepared::new(&model.to_string()).unwrap();
++        let candidates: Vec<_> = rows
++            .iter()
++            .enumerate()
++            .map(|(i, row)| json!({"id": format!("row-{i}"), "parameters": row}))
++            .collect();
++        let lean: Value = serde_json::from_str(
++            &prepared
++                .scores_json(&Value::from(candidates).to_string(), budget)
++                .unwrap(),
++        )
++        .unwrap();
++        let flat = rows.concat();
++        let matrix = prepared.score_matrix(rows.len(), &flat, budget).unwrap();
++        let records = lean["records"].as_array().unwrap();
++        assert_eq!(matrix.len(), records.len());
++        for (row, record) in matrix.iter().zip(records) {
++            assert_eq!(row.status, record["status"].as_str().unwrap(), "{budget}");
++            assert_eq!(row.steps, record["steps"].as_u64().unwrap(), "{budget}");
++            assert_eq!(
++                row.score.map(f64::to_bits),
++                record["score"].as_f64().map(f64::to_bits),
++                "{budget}"
++            );
++            assert_eq!(row.score.is_some(), row.status == "complete");
++        }
++    }
++
++    #[test]
++    fn score_matrix_matches_scores_json_for_sir_rows_and_budgets() {
++        let example = fixture();
++        let base: Vec<f64> = serde_json::from_value(example["parameters"].clone()).unwrap();
++        let rows = vec![
++            base.clone(),
++            vec![base[0] * 1.2, base[1] * 0.9],
++            vec![7.0, 0.4],
++            vec![-0.1, 0.4],
++            vec![0.0, 0.4],
++            vec![0.7, 0.0],
++        ];
++        let cancel = std::env::temp_dir().join(format!("pe-matrix-cancel-{}", std::process::id()));
++        std::fs::write(&cancel, b"").unwrap();
++        let cancel_budget = json!({"cancel_file": cancel}).to_string();
++        for budget in [
++            "{}",
++            r#"{"workers":4}"#,
++            r#"{"max_steps":1}"#,
++            r#"{"max_steps":2}"#,
++            r#"{"workers":3,"max_steps":1}"#,
++            r#"{"wall_ms":60000}"#,
++            &cancel_budget,
++        ] {
++            assert_matrix_matches_scores(&example["model"], &rows, budget);
++        }
++        std::fs::remove_file(&cancel).unwrap();
++        // Wrong dimension is a per-row invalid status, as in the JSON path.
++        assert_matrix_matches_scores(&example["model"], &[vec![0.5; 3], vec![0.5; 3]], "{}");
++        let prepared = Prepared::new(&example["model"].to_string()).unwrap();
++        let absent = json!({"cancel_file": cancel.with_extension("absent")}).to_string();
++        let unaffected = prepared.score_matrix(1, &base, &absent).unwrap();
++        assert_eq!(unaffected[0].status, "complete");
++    }
++
++    #[test]
++    fn score_matrix_matches_scores_json_for_dimension_zero_models() {
++        let moran = json!({"kind":"moran","population":6,"mutant_a":2,"mutant_b":1,"updates":5});
++        let calendar = json!({"kind":"calendar","initial_on_probability":0.25,
++            "segments":[{"duration":1.0,"on_rate":0.5,"off_rate":0.25},
++                        {"duration":0.5,"on_rate":0.0,"off_rate":2.0}]});
++        for model in [moran, calendar] {
++            for budget in [
++                "{}",
++                r#"{"workers":2}"#,
++                r#"{"max_steps":1}"#,
++                r#"{"max_steps":2}"#,
++            ] {
++                assert_matrix_matches_scores(&model, &[vec![], vec![], vec![]], budget);
++                assert_matrix_matches_scores(&model, &[vec![1.0], vec![2.0]], budget);
++            }
++        }
++    }
++
++    #[test]
++    fn score_matrix_rejects_invalid_shapes_and_budgets() {
++        let example = fixture();
++        let prepared = Prepared::new(&example["model"].to_string()).unwrap();
++        assert!(prepared.score_matrix(0, &[], "{}").is_err());
++        assert!(prepared.score_matrix(4097, &[], "{}").is_err());
++        assert!(prepared.score_matrix(4096, &[], "{}").is_ok());
++        assert!(prepared.score_matrix(2, &[1.0, 2.0, 3.0], "{}").is_err());
++        assert!(prepared.score_matrix(1, &[0.5; 65], "{}").is_err());
++        assert_eq!(
++            prepared.score_matrix(1, &[0.5; 64], "{}").unwrap()[0].status,
++            "invalid"
++        );
++        for budget in [
++            "",
++            "null",
++            r#"{"workers":0}"#,
++            r#"{"workers":65}"#,
++            r#"{"max_steps":0}"#,
++            r#"{"wall_ms":0}"#,
++            r#"{"unknown":1}"#,
++        ] {
++            assert!(
++                prepared.score_matrix(1, &[0.7, 0.4], budget).is_err(),
++                "{budget}"
++            );
++        }
++        // Values that JSON cannot carry are classified per row.
++        let rows = prepared
++            .score_matrix(2, &[f64::NAN, 0.4, 0.7, f64::INFINITY], "{}")
++            .unwrap();
++        assert!(
++            rows.iter()
++                .all(|r| r.status == "invalid" && r.score.is_none())
++        );
++    }
++
+     #[test]
+     fn model_and_candidate_validation_are_independent() {
+         let mut example = fixture();
+diff --git a/validation/optimize_performance.py b/validation/optimize_performance.py
+index b6a8836..e75dd99 100644
+--- a/validation/optimize_performance.py
++++ b/validation/optimize_performance.py
+@@ -11,7 +11,9 @@ from scipy.optimize import differential_evolution
+ def main():
+     parser = argparse.ArgumentParser(description=__doc__)
+     parser.add_argument("module")
+-    parser.add_argument("--scores", action="store_true")
++    modes = parser.add_mutually_exclusive_group()
++    modes.add_argument("--scores", action="store_true")
++    modes.add_argument("--matrix", action="store_true")
+     args = parser.parse_args()
+     package = importlib.import_module(args.module)
+     example = package.load_example()
+@@ -21,6 +23,12 @@ def main():
+ 
+     def objective(parameters):
+         nonlocal failures
++        if args.matrix:
++            scores, statuses, _ = prepared.score_matrix([parameters.tolist()])
++            if statuses[0] != "complete":
++                failures += 1
++                return 1e20
++            return scores[0]
+         if args.scores:
+             row = prepared.scores([{"id": "one", "parameters": parameters.tolist()}])["records"][0]
+         else:
+@@ -42,7 +50,7 @@ def main():
+     if row["status"] != "complete":
+         raise RuntimeError(row)
+     print(json.dumps({
+-        "mode": "scores" if args.scores else "full",
++        "mode": "matrix" if args.matrix else "scores" if args.scores else "full",
+         "total_seconds": finished - start,
+         "prepare_seconds": initialized - start,
+         "search_seconds": searched - initialized,
+diff --git a/validation/performance_pair.py b/validation/performance_pair.py
+index af36545..ba3df86 100644
+--- a/validation/performance_pair.py
++++ b/validation/performance_pair.py
+@@ -34,32 +34,47 @@ def main():
+     parser.add_argument("--samples", type=int, default=5)
+     parser.add_argument("--before-scores", action="store_true")
+     parser.add_argument("--after-scores", action="store_true")
++    parser.add_argument("--before-matrix", action="store_true",
++                        help="time the before binary through the typed score-matrix API")
++    parser.add_argument("--after-matrix", action="store_true",
++                        help="time the after binary through the typed score-matrix API")
+     args = parser.parse_args()
+     if args.samples < 1:
+         parser.error("--samples must be positive")
+     binaries = [args.before, args.after]
+     scores = [args.before_scores, args.after_scores]
++    matrix = [args.before_matrix, args.after_matrix]
++    if any(s and m for s, m in zip(scores, matrix)):
++        parser.error("choose scores or matrix mode per side, not both")
+ 
+     def run(i, *extra):
+         env = os.environ.copy()
+         env.pop("CRAFT_SCORES", None)
++        env.pop("CRAFT_MATRIX", None)
+         if scores[i]:
+             env["CRAFT_SCORES"] = "1"
++        if matrix[i]:
++            env["CRAFT_MATRIX"] = "1"
+         return subprocess.check_output([binaries[i], args.fixture, args.workload, *extra], env=env)
+ 
+     probes = [json.loads(run(i, "probe")) for i in range(2)]
+     for p in probes:
+         p.pop("version")
+-        if any(scores):
++        if any(scores) or any(matrix):
+             for row in p["records"]:
+                 row["metrics"] = None
++        if any(matrix):
++            for row in p["records"]:
++                row["detail"] = None
+     equal(*probes)
+     samples = [[], []]
+     for i in range(args.samples):
+         for j in (0, 1) if i % 2 == 0 else (1, 0):
+             samples[j].append(float(run(j)))
+     medians = list(map(statistics.median, samples))
+-    print(json.dumps({"workload": args.workload, "before_seconds": samples[0],
++    modes = ["matrix" if m else "scores" if s else "full" for s, m in zip(scores, matrix)]
++    print(json.dumps({"workload": args.workload, "before_mode": modes[0], "after_mode": modes[1],
++                      "before_seconds": samples[0],
+                       "after_seconds": samples[1], "medians_seconds": medians,
+                       "speedup": medians[0] / medians[1]}, indent=2))
+ 
+diff --git a/validation/release_checks.py b/validation/release_checks.py
+index e94efe9..df483bd 100644
+--- a/validation/release_checks.py
++++ b/validation/release_checks.py
+@@ -2,6 +2,7 @@
+ 
+ import importlib
+ import json
++import math
+ from pathlib import Path
+ import re
+ import sys
+@@ -23,6 +24,22 @@ with TemporaryDirectory() as tmp:
+         assert lean["records"] == [r | {"metrics": None} for r in full["records"]]
+         if "cancel_file" in budget:
+             assert lean["records"][0]["status"] == "cancelled"
++        # The typed matrix API agrees with the lean records row by row.
++        for candidate, row in zip(candidates, lean["records"], strict=True):
++            scores, statuses, steps = prepared.score_matrix([candidate["parameters"]], **budget)
++            assert (statuses, steps) == ([row["status"]], [row["steps"]]), (budget, row)
++            if row["status"] == "complete":
++                assert scores == [row["score"]], (budget, row)
++            else:
++                assert math.isnan(scores[0]), (budget, row)
++        rows = [example["parameters"], [x * 1.1 for x in example["parameters"]],
++                [9.0] * len(example["parameters"])]
++        listed = prepared.scores([{"id": str(i), "parameters": r} for i, r in enumerate(rows)],
++                                 **budget)["records"]
++        scores, statuses, steps = prepared.score_matrix(rows, **budget)
++        assert statuses == [r["status"] for r in listed] and steps == [r["steps"] for r in listed]
++        assert all(s == r["score"] if r["status"] == "complete" else math.isnan(s)
++                   for s, r in zip(scores, listed, strict=True))
+     if module == "population_epidemiology":
+         calendar = package.Prepared({"kind": "calendar", "initial_on_probability": 0.5,
+                                      "segments": [{"duration": 1, "on_rate": 0, "off_rate": 0}] * 3})
+@@ -54,6 +71,19 @@ except ValueError:
+     pass
+ else:
+     raise AssertionError("scores accepted a traced candidate")
++try:
++    prepared.score_matrix([example["parameters"], example["parameters"][:1]])
++except ValueError:
++    pass
++else:
++    raise AssertionError("score_matrix accepted ragged rows")
++try:
++    import numpy
++except ImportError:
++    numpy = None
++if numpy is not None:
++    array = numpy.array([example["parameters"]] * 3)
++    assert prepared.score_matrix(array) == prepared.score_matrix(array.tolist())
+ 
+ snippets = re.findall(r"^```python\n(.*?)^```", Path(tutorial).read_text(), re.M | re.S)
+ assert len(snippets) >= 4
+@@ -61,4 +91,5 @@ namespace = {}
+ for i, snippet in enumerate(snippets, 1):
+     exec(compile(snippet, f"tutorial-{i}", "exec"), namespace)
+ print(json.dumps({"status": "passed", "tutorial_python_blocks": len(snippets),
+-                  "lean_api_and_budget_parity": True}))
++                  "lean_api_and_budget_parity": True, "matrix_api_parity": True,
++                  "numpy_matrix_input": numpy is not None}))
+-- 
+2.43.0
+

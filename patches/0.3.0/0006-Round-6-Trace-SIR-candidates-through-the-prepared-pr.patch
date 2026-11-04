@@ -1,0 +1,434 @@
+From f820ce16df563848a7e856cab50806672326dcc2 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 4 Nov 2026 11:57:47 -0400
+Subject: [PATCH 06/12] Round 6: Trace SIR candidates through the prepared
+ projection
+
+Unmonitored traced SIR candidates now use the prepared projection too. In
+trace mode it records every snapshot field the vendored solver records,
+and the domain assembles the crn_craft::fsp::FspResult with states in
+discovery order, uniformization rate, edge count, work and document
+hashes. Preparation also mirrors the solver's output-reservation and
+workspace checks. A unit test compares the serialized prepared result with
+the vendored solver's byte for byte over the projection grid, and the
+record test now includes traced candidates against the forced vendored
+path. validate.py passed against the release CLI.
+
+Workload: trace (12 traced SIR candidates, full records), 11 samples.
+Before median: 2.308 ms. After median: 1.237 ms. Speedup: 1.87x.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ evidence/performance-0.3.0/plan.md            |  23 ++++
+ evidence/performance-0.3.0/round06-trace.json |  36 ++++++
+ src/domain.rs                                 |  45 +++++--
+ src/lib.rs                                    |  11 ++
+ src/sir_fsp.rs                                | 118 ++++++++++++++++--
+ 5 files changed, 212 insertions(+), 21 deletions(-)
+ create mode 100644 evidence/performance-0.3.0/round06-trace.json
+
+diff --git a/evidence/performance-0.3.0/plan.md b/evidence/performance-0.3.0/plan.md
+index a4aea79..5e6717d 100644
+--- a/evidence/performance-0.3.0/plan.md
++++ b/evidence/performance-0.3.0/plan.md
+@@ -177,3 +177,26 @@ transitions and 65 updates, about 92 us per case.
+   (`round05-domain2.json`). Kept. `validate.py` passed against the round
+   5 CLI, and `run models/request.json` printed the same bytes as the
+   0.2.0 CLI.
++
++## Round 6: trace SIR candidates through the prepared projection
++
++- Change: unmonitored traced SIR candidates also use the prepared
++  projection. In trace mode it records every snapshot the vendored solver
++  records (probabilities, leakage, first and second raw moments of all
++  three species, tail, discarded weight, mass defect and residual), and
++  the domain assembles a `crn_craft::fsp::FspResult` with the states in
++  discovery order, the uniformization rate, edge count, work and the
++  document hashes. Preparation now also mirrors the solver's
++  output-reservation and workspace checks, so a structure that would
++  fail them stays on the vendored path.
++- Workload: `trace` (12 traced SIR candidates, full records), round 5
++  against this round.
++- Expected effect: about 160 us of solver time per traced candidate
++  falls to about 30 us, leaving trace serialization, roughly 2x to 3x.
++- Decision: the brief's rule. A unit test compares the serialized
++  prepared `FspResult` with the vendored solver's, byte for byte, over the
++  projection test grid.
++- Result: 2.308 ms before, 1.237 ms after, 1.87x (`round06-trace.json`).
++  Kept. `validate.py` (which compares traced FSP probabilities with a
++  dense matrix exponential) passed, and the traced CLI request printed
++  the same bytes as the 0.2.0 CLI.
+diff --git a/evidence/performance-0.3.0/round06-trace.json b/evidence/performance-0.3.0/round06-trace.json
+new file mode 100644
+index 0000000..454f75e
+--- /dev/null
++++ b/evidence/performance-0.3.0/round06-trace.json
+@@ -0,0 +1,36 @@
++{
++  "workload": "trace",
++  "before_mode": "full",
++  "after_mode": "full",
++  "before_seconds": [
++    0.003460890333333333,
++    0.0036020663333333337,
++    0.0032763299999999996,
++    0.0033321818333333334,
++    0.003553633,
++    0.002197505833333333,
++    0.002197712,
++    0.00211357,
++    0.0021837058333333335,
++    0.002304039,
++    0.002307959666666667
++  ],
++  "after_seconds": [
++    0.0014660388333333333,
++    0.0014825706666666669,
++    0.0013180355000000001,
++    0.0012466936666666666,
++    0.0016107576666666665,
++    0.001236772,
++    0.0009977623333333333,
++    0.0009983943333333333,
++    0.0010259873333333333,
++    0.0010561368333333334,
++    0.0010356545
++  ],
++  "medians_seconds": [
++    0.002307959666666667,
++    0.001236772
++  ],
++  "speedup": 1.8661157162893944
++}
+diff --git a/src/domain.rs b/src/domain.rs
+index 27fa412..de29c49 100644
+--- a/src/domain.rs
++++ b/src/domain.rs
+@@ -1,4 +1,4 @@
+-use crate::sir_fsp::{self, Projection, Solution};
++use crate::sir_fsp::{self, Detail, Projection, Solution};
+ use crate::{Evaluation, Work, infeasible, invalid};
+ use serde::Deserialize;
+ use serde_json::{Value, json, value::RawValue};
+@@ -94,7 +94,7 @@ pub fn prepare(input: Input) -> Result<Model, String> {
+             let (model, run) = sir_documents(initial, sample_times, *tolerance, 1.0, 1.0, None);
+             if crn_craft::check_bytes(model.as_bytes(), Some(run.as_bytes())).valid {
+                 let projection = Projection::new(initial, sample_times, *tolerance);
+-                if projection.output_bound() <= u128::from(sir_fsp::MAX_OUTPUT_BYTES) {
++                if projection.fits_budgets() {
+                     sir = Some(projection);
+                 }
+             }
+@@ -219,15 +219,22 @@ pub fn evaluate(model: &Model, parameters: &[f64], trace: bool, work: &mut Work<
+             let n = susceptible + infected + recovered;
+             let initial = [*susceptible, *infected, *recovered];
+             let infection = beta / f64::from(n);
++            let detail = if trace {
++                Detail::Trace
++            } else if work.metrics_enabled {
++                Detail::Diagnostics
++            } else {
++                Detail::Means
++            };
+             let prepared = model
+                 .sir
+                 .as_ref()
+-                .filter(|_| !work.monitored && !trace)
+-                .and_then(|p| p.solve(infection, gamma, work.metrics_enabled));
++                .filter(|_| !work.monitored)
++                .and_then(|p| p.solve(infection, gamma, detail));
+             let solved = match prepared {
+-                Some(solution) => {
+-                    let (model_sha256, run_sha256) = if work.metrics_enabled {
+-                        let (model, run) = sir_documents(
++                Some(mut solution) => {
++                    let hashes = (work.metrics_enabled || trace).then(|| {
++                        let (model_bytes, run_bytes) = sir_documents(
+                             initial,
+                             sample_times,
+                             *tolerance,
+@@ -236,19 +243,30 @@ pub fn evaluate(model: &Model, parameters: &[f64], trace: bool, work: &mut Work<
+                             None,
+                         );
+                         (
+-                            Some(crn_craft::sha256(model.as_bytes())),
+-                            Some(crn_craft::sha256(run.as_bytes())),
++                            crn_craft::sha256(model_bytes.as_bytes()),
++                            crn_craft::sha256(run_bytes.as_bytes()),
+                         )
+-                    } else {
+-                        (None, None)
+-                    };
++                    });
++                    let trace = solution.trace.take().map(|t| crn_craft::fsp::FspResult {
++                        schema: crn_craft::fsp::FspVersion::V01,
++                        model_sha256: hashes.as_ref().expect("trace hashes").0.clone(),
++                        run_sha256: hashes.as_ref().expect("trace hashes").1.clone(),
++                        species: ["S", "I", "R"].map(String::from).to_vec(),
++                        states: t.states,
++                        snapshots: t.snapshots,
++                        uniformization_rate: t.uniformization_rate,
++                        sparse_edges: t.sparse_edges,
++                        work: solution.work,
++                        numerical_error_certified: false,
++                    });
++                    let (model_sha256, run_sha256) = hashes.unzip();
+                     Ok(Solved {
+                         solution,
+                         model_sha256,
+                         run_sha256,
+                         // The vendored solver never certifies its numerical error.
+                         certified: false,
+-                        trace: None,
++                        trace,
+                     })
+                 }
+                 None => {
+@@ -281,6 +299,7 @@ pub fn evaluate(model: &Model, parameters: &[f64], trace: bool, work: &mut Work<
+                                 })
+                                 .collect(),
+                             work: out.work,
++                            trace: None,
+                         };
+                         Solved {
+                             solution,
+diff --git a/src/lib.rs b/src/lib.rs
+index 473e40c..46ba76a 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -689,9 +689,20 @@ mod tests {
+             {"id":"range","parameters":[5.5,0.4]},
+         ])
+         .to_string();
++        let traced = json!([
++            {"id":"fit","parameters":[0.7,0.4],"trace":true},
++            {"id":"fast","parameters":[5.0,5.0],"trace":true},
++            {"id":"zero-beta","parameters":[0.0,0.4],"trace":true},
++            {"id":"plain","parameters":[0.9,0.5]},
++        ])
++        .to_string();
+         for model in models {
+             example["model"] = model;
+             let prepared = Prepared::new(&example["model"].to_string()).unwrap();
++            assert_eq!(
++                prepared.evaluate_json(&traced, "{}").unwrap(),
++                prepared.evaluate_json(&traced, &reference).unwrap()
++            );
+             for metrics in [true, false] {
+                 let run = |budget: &str| {
+                     if metrics {
+diff --git a/src/sir_fsp.rs b/src/sir_fsp.rs
+index 2671278..0e79e9f 100644
+--- a/src/sir_fsp.rs
++++ b/src/sir_fsp.rs
+@@ -10,7 +10,7 @@
+ //! diagnostics and the FSP work count are bit-identical to the vendored
+ //! solver. Whenever a candidate reaches a condition that this kernel does not
+ //! reproduce, `solve` returns `None` and the caller runs the vendored solver.
+-use crn_craft::fsp::MAX_WORK;
++use crn_craft::fsp::{FspSnapshot, MAX_WORK};
+ use std::collections::HashMap;
+ 
+ /// The output budget the SIR run document declares.
+@@ -22,7 +22,9 @@ const REACTIONS: usize = 2;
+ 
+ /// Rate-independent SIR projection structure.
+ pub struct Projection {
+-    /// Susceptible and infected counts per state, in CRN-craft discovery order.
++    /// Counts per state, in CRN-craft discovery order.
++    counts: Vec<[i64; SPECIES]>,
++    /// Susceptible and infected counts per state as floating-point values.
+     susceptible: Vec<f64>,
+     infected: Vec<f64>,
+     /// Target state of each state's infection and recovery transition.
+@@ -45,6 +47,17 @@ enum Entry {
+     Recovery,
+ }
+ 
++/// How much of a solution to record.
++#[derive(Clone, Copy, PartialEq, Eq)]
++pub enum Detail {
++    /// Infected means only.
++    Means,
++    /// Means and per-snapshot error diagnostics.
++    Diagnostics,
++    /// Diagnostics and the vendored solver's full trace.
++    Trace,
++}
++
+ /// Per-sample-time output of one rate binding.
+ pub struct Solution {
+     /// Projected first moment of the infected count at each sample time.
+@@ -54,6 +67,16 @@ pub struct Solution {
+     pub errors: Vec<[f64; 4]>,
+     /// The vendored solver's work count.
+     pub work: u64,
++    /// The rest of the vendored solver's result in trace mode.
++    pub trace: Option<Trace>,
++}
++
++/// Rate-dependent parts of `crn_craft::fsp::FspResult` other than hashes.
++pub struct Trace {
++    pub states: Vec<Vec<i64>>,
++    pub snapshots: Vec<FspSnapshot>,
++    pub uniformization_rate: f64,
++    pub sparse_edges: usize,
+ }
+ 
+ impl Projection {
+@@ -118,9 +141,26 @@ impl Projection {
+             entries,
+             times: times.to_vec(),
+             tolerance,
++            counts: states,
+         }
+     }
+ 
++    /// Whether the vendored solver's rate-independent output and workspace
++    /// checks pass for this structure, so they cannot fail for a binding.
++    pub fn fits_budgets(&self) -> bool {
++        let n = self.infected.len() as u128;
++        let t = self.times.len() as u128;
++        let species = SPECIES as u128;
++        let reserve = n * (species * 24 + 32) + n * t * 32 + t * (species * 48 + 400) + 16384;
++        let memory = n * (species * 32 + 128)
++            + self.edges as u128 * 64
++            + n * (t * 8 + 64)
++            + t * (species * 16 + 256);
++        reserve <= u128::from(MAX_OUTPUT_BYTES)
++            && memory <= 256 * 1024 * 1024
++            && self.output_bound() <= u128::from(MAX_OUTPUT_BYTES)
++    }
++
+     /// Number of projected states.
+     #[cfg(test)]
+     pub fn states(&self) -> usize {
+@@ -138,7 +178,9 @@ impl Projection {
+ 
+     /// Solve one binding of the mass-action coefficients, or return `None`
+     /// when the vendored solver must decide the outcome.
+-    pub fn solve(&self, infection: f64, gamma: f64, diagnostics: bool) -> Option<Solution> {
++    pub fn solve(&self, infection: f64, gamma: f64, detail: Detail) -> Option<Solution> {
++        let diagnostics = detail != Detail::Means;
++        let traced = detail == Detail::Trace;
+         if !infection.is_normal() || !gamma.is_normal() || infection < 0.0 || gamma < 0.0 {
+             return None;
+         }
+@@ -230,6 +272,7 @@ impl Projection {
+         p[0] = 1.0;
+         let mut means = Vec::with_capacity(self.times.len());
+         let mut errors = Vec::with_capacity(if diagnostics { self.times.len() } else { 0 });
++        let mut snapshots = Vec::with_capacity(if traced { self.times.len() } else { 0 });
+         let mut tail_bound = 0.0;
+         let mut discarded = 0.0;
+         let mut previous = 0.0;
+@@ -283,15 +326,52 @@ impl Projection {
+                 return None;
+             }
+             means.push(self.infected.iter().zip(&p).map(|(x, q)| x * q).sum());
++            if traced {
++                // The vendored solver's snapshot, field by field.
++                snapshots.push(FspSnapshot {
++                    time,
++                    probabilities: p[..n].to_vec(),
++                    physical_leakage_estimate: p[n],
++                    projected_first_moment: (0..SPECIES)
++                        .map(|j| {
++                            self.counts
++                                .iter()
++                                .zip(&p)
++                                .map(|(x, q)| x[j] as f64 * q)
++                                .sum()
++                        })
++                        .collect(),
++                    projected_second_raw_moment: (0..SPECIES)
++                        .map(|j| {
++                            self.counts
++                                .iter()
++                                .zip(&p)
++                                .map(|(x, q)| (x[j] as f64).powi(2) * q)
++                                .sum()
++                        })
++                        .collect(),
++                    series_tail_upper_bound: tail_bound,
++                    discarded_weight_estimate: discarded,
++                    mass_defect: 1.0 - mass,
++                    roundoff_mass_residual: (1.0 - mass - discarded).abs(),
++                });
++            }
+             if diagnostics {
+                 errors.push([p[n], tail_bound, 1.0 - mass, (1.0 - mass - discarded).abs()]);
+             }
+             previous = time;
+         }
++        let trace = traced.then(|| Trace {
++            states: self.counts.iter().map(|x| x.to_vec()).collect(),
++            snapshots,
++            uniformization_rate: lambda,
++            sparse_edges: self.edges,
++        });
+         Some(Solution {
+             means,
+             errors,
+             work,
++            trace,
+         })
+     }
+ }
+@@ -348,7 +428,7 @@ mod tests {
+         let control = crn_craft::simulation::Control::default();
+         let reference = crn_craft::fsp::solve(model.as_bytes(), run.as_bytes(), &control);
+         let projection = Projection::new(initial, times, tolerance);
+-        let fast = projection.solve(infection, gamma, true);
++        let fast = projection.solve(infection, gamma, Detail::Diagnostics);
+         let label = format!("{initial:?} {times:?} {tolerance} {beta} {gamma}");
+         let Ok(out) = reference else {
+             assert!(fast.is_none(), "{label}");
+@@ -379,9 +459,31 @@ mod tests {
+             assert_eq!(bits(e), bits(&expected), "{label}");
+         }
+         assert_eq!(fast.errors.len(), out.snapshots.len());
+-        let lean = projection.solve(infection, gamma, false).unwrap();
++        let lean = projection.solve(infection, gamma, Detail::Means).unwrap();
+         assert_eq!(bits(&lean.means), bits(&means), "{label}");
+-        assert!(lean.errors.is_empty());
++        assert!(lean.errors.is_empty() && lean.trace.is_none());
++        // The traced binding reproduces the solver's serialized result.
++        let traced = projection.solve(infection, gamma, Detail::Trace).unwrap();
++        assert_eq!(bits(&traced.means), bits(&means), "{label}");
++        let trace = traced.trace.unwrap();
++        let rebuilt = crn_craft::fsp::FspResult {
++            schema: crn_craft::fsp::FspVersion::V01,
++            model_sha256: crn_craft::sha256(model.as_bytes()),
++            run_sha256: crn_craft::sha256(run.as_bytes()),
++            species: ["S", "I", "R"].map(String::from).to_vec(),
++            states: trace.states,
++            snapshots: trace.snapshots,
++            uniformization_rate: trace.uniformization_rate,
++            sparse_edges: trace.sparse_edges,
++            work: traced.work,
++            numerical_error_certified: false,
++        };
++        assert_eq!(
++            serde_json::to_string(&rebuilt).unwrap(),
++            serde_json::to_string(&out).unwrap(),
++            "{label}"
++        );
++        assert!(projection.fits_budgets());
+         assert!(projection.output_bound() > serde_json::to_string(&out).unwrap().len() as u128);
+     }
+ 
+@@ -432,8 +534,8 @@ mod tests {
+             (0.1, f64::NAN),
+             (-0.1, 0.4),
+         ] {
+-            assert!(projection.solve(infection, gamma, true).is_none());
++            assert!(projection.solve(infection, gamma, Detail::Trace).is_none());
+         }
+-        assert!(projection.solve(0.1, 0.4, true).is_some());
++        assert!(projection.solve(0.1, 0.4, Detail::Trace).is_some());
+     }
+ }
+-- 
+2.43.0
+
