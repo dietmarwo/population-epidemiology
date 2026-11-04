@@ -1,7 +1,7 @@
 use crate::sir_fsp::{self, Projection, Solution};
 use crate::{Evaluation, Work, infeasible, invalid};
 use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::{Value, json, value::RawValue};
 
 pub const CAPABILITIES: &[&str] = &[
     "sir_via_crn_fsp",
@@ -42,6 +42,8 @@ pub struct Model {
     input: Input,
     moran: Option<Moran>,
     calendar: Vec<[f64; 2]>,
+    /// Calendar metrics depend only on the model, so they are serialized once.
+    calendar_metrics: Option<Box<RawValue>>,
     /// Prepared SIR projection, absent when CRN-craft rejects the documents.
     sir: Option<Projection>,
 }
@@ -142,10 +144,15 @@ pub fn prepare(input: Input) -> Result<Model, String> {
             }
         }
     }
+    let calendar_metrics = (!calendar.is_empty()).then(|| {
+        serde_json::value::to_raw_value(&json!({"boundary_time_and_on_probability":calendar}))
+            .expect("finite calendar boundaries")
+    });
     Ok(Model {
         input,
         moran,
         calendar,
+        calendar_metrics,
         sir,
     })
 }
@@ -342,7 +349,12 @@ pub fn evaluate(model: &Model, parameters: &[f64], trace: bool, work: &mut Work<
             work.advance(boundaries.len() as u64)?;
             Ok((
                 boundaries.last().expect("nonempty calendar")[1],
-                work.metrics(|| json!({"boundary_time_and_on_probability":boundaries})),
+                work.raw_metrics(|| {
+                    model
+                        .calendar_metrics
+                        .clone()
+                        .expect("prepared calendar metrics")
+                }),
             ))
         }
     }
@@ -517,6 +529,7 @@ mod tests {
             };
             let (_, metrics) =
                 moran(&prepare_moran(n, a0, b0), n, updates, true, &mut work).unwrap();
+            let metrics: Value = serde_json::from_str(metrics.unwrap().get()).unwrap();
             let law: Vec<f64> =
                 serde_json::from_value(metrics["joint"]["probabilities"].clone()).unwrap();
             let reference = scatter(n, a0, b0, updates);

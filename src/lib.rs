@@ -14,7 +14,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub type Evaluation = Result<(f64, Value), Failure>;
+/// Serialized metrics JSON, or `None` when the caller disabled metrics.
+pub type Metrics = Option<Box<RawValue>>;
+/// A candidate's score and metrics, or its classified failure.
+pub type Evaluation = Result<(f64, Metrics), Failure>;
 
 #[derive(Debug, Clone)]
 pub struct Failure {
@@ -80,12 +83,15 @@ pub struct Work<'a> {
     metrics_enabled: bool,
 }
 impl Work<'_> {
-    pub fn metrics(&self, make: impl FnOnce() -> Value) -> Value {
-        if self.metrics_enabled {
-            make()
-        } else {
-            Value::Null
-        }
+    /// Build and serialize metrics only when the caller requested them.
+    pub fn metrics(&self, make: impl FnOnce() -> Value) -> Metrics {
+        self.metrics_enabled
+            .then(|| serde_json::value::to_raw_value(&make()).expect("finite metrics"))
+    }
+
+    /// Return already serialized metrics only when the caller requested them.
+    pub fn raw_metrics(&self, make: impl FnOnce() -> Box<RawValue>) -> Metrics {
+        self.metrics_enabled.then(make)
     }
 
     #[inline]
@@ -155,7 +161,7 @@ struct Record<'a> {
     status: &'static str,
     steps: u64,
     score: Option<f64>,
-    metrics: Option<Value>,
+    metrics: Metrics,
     detail: Option<String>,
 }
 
@@ -297,7 +303,7 @@ impl Prepared {
                 status: "complete",
                 steps,
                 score: Some(score),
-                metrics: Some(metrics),
+                metrics,
                 detail: None,
             },
             Err(e) => Record {
@@ -305,7 +311,10 @@ impl Prepared {
                 status: e.status,
                 steps,
                 score: None,
-                metrics: if metrics_enabled { e.metrics } else { None },
+                metrics: e
+                    .metrics
+                    .filter(|_| metrics_enabled)
+                    .map(|m| serde_json::value::to_raw_value(&m).expect("finite metrics")),
                 detail: Some(e.detail),
             },
         }
@@ -730,6 +739,46 @@ mod tests {
             };
             assert_eq!(row["records"][0]["status"], expected);
             assert_eq!(row["records"][0]["steps"], max_steps.min(total));
+        }
+    }
+
+    #[test]
+    fn cli_values_parse_the_same_records_as_the_serialized_batch() {
+        let example = fixture();
+        let models = [
+            example["model"].clone(),
+            json!({"kind":"moran","population":5,"mutant_a":1,"mutant_b":2,"updates":4}),
+            json!({"kind":"calendar","initial_on_probability":0.1,
+                   "segments":[{"duration":0.5,"on_rate":2.0,"off_rate":0.3},
+                               {"duration":1.5,"on_rate":0.0,"off_rate":0.0}]}),
+        ];
+        for model in models {
+            let candidates = json!([
+                {"id":"plain","parameters":example["parameters"]},
+                {"id":"traced","parameters":example["parameters"],"trace":true},
+                {"id":"empty","parameters":[]},
+                {"id":"empty-traced","parameters":[],"trace":true},
+            ]);
+            let request = json!({"schema":"population-epidemiology.request/0.1",
+                                 "model":model,"candidates":candidates,
+                                 "budget":{"workers":2}});
+            let prepared = Prepared::new(&model.to_string()).unwrap();
+            let batch: Value = serde_json::from_str(
+                &prepared
+                    .evaluate_json(&candidates.to_string(), r#"{"workers":2}"#)
+                    .unwrap(),
+            )
+            .unwrap();
+            let value = run(&request.to_string()).unwrap();
+            assert_eq!(value, batch);
+            assert_eq!(value.to_string(), batch.to_string());
+            assert!(
+                batch["records"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|r| r["status"] == "complete" && r["metrics"].is_object())
+            );
         }
     }
 

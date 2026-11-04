@@ -138,3 +138,42 @@ transitions and 65 updates, about 92 us per case.
   `max_steps` values around the limit.
 - Result: 3.292 ms before, 3.051 ms after, 1.08x
   (`round04-lean-domain.json`). Kept.
+
+## Round 5: template the SIR provenance documents
+
+- Change: at preparation, split the unmonitored CRN model document around
+  its two rate values and the run document around the model hash, and
+  check that the template reproduces `sir_documents` for a probe binding.
+  Full records then assemble the exact same bytes from the fixed parts
+  and the two numbers formatted by serde_json, and hash them. This
+  replaces two `json!` value trees and their serialization per candidate.
+  Monitored and fallback candidates keep `sir_documents`.
+- Workload: `serial` (96 SIR candidates, full records), round 4 against
+  this round.
+- Expected effect: about 9 of about 40 us per candidate, roughly 1.2x.
+- Decision: the brief's rule. The CRN hashes in the records must be
+  identical; a unit test compares the assembled documents with
+  `sir_documents` byte for byte over many rate values.
+- Result: 4.319 ms before, 4.215 ms after, 1.02x. Rejected and reverted
+  (`rejected/attempt-document-template-serial.json`). The documents cost
+  far less per candidate inside the batch than the isolated profile
+  suggested, so this does not count as a round.
+
+## Round 5: carry metrics as serialized JSON and render calendar metrics once
+
+- Change: domain evaluations return their metrics as serialized JSON
+  (`Box<RawValue>`) instead of a `serde_json::Value` tree, and records
+  embed them verbatim. The calendar model's metrics depend only on the
+  model, so they are rendered once at preparation and copied into each
+  full record. The CLI's `Value` result parses the same text back, so its
+  output is unchanged.
+- Workload: `domain2` (48 calendar cases with 350 segments, full
+  records), round 4 against this round.
+- Expected effect: about 54 us per record of `Value` construction and
+  float formatting becomes a copy of about 10 KB, roughly 5x to 15x.
+- Decision: the brief's rule. Output bytes must stay identical; a unit
+  test compares `run()` with the parsed batch output.
+- Result: 2.653 ms before, 0.035 ms after, 76.78x
+  (`round05-domain2.json`). Kept. `validate.py` passed against the round
+  5 CLI, and `run models/request.json` printed the same bytes as the
+  0.2.0 CLI.
