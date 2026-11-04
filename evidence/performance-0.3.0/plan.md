@@ -177,3 +177,26 @@ transitions and 65 updates, about 92 us per case.
   (`round05-domain2.json`). Kept. `validate.py` passed against the round
   5 CLI, and `run models/request.json` printed the same bytes as the
   0.2.0 CLI.
+
+## Round 6: trace SIR candidates through the prepared projection
+
+- Change: unmonitored traced SIR candidates also use the prepared
+  projection. In trace mode it records every snapshot the vendored solver
+  records (probabilities, leakage, first and second raw moments of all
+  three species, tail, discarded weight, mass defect and residual), and
+  the domain assembles a `crn_craft::fsp::FspResult` with the states in
+  discovery order, the uniformization rate, edge count, work and the
+  document hashes. Preparation now also mirrors the solver's
+  output-reservation and workspace checks, so a structure that would
+  fail them stays on the vendored path.
+- Workload: `trace` (12 traced SIR candidates, full records), round 5
+  against this round.
+- Expected effect: about 160 us of solver time per traced candidate
+  falls to about 30 us, leaving trace serialization, roughly 2x to 3x.
+- Decision: the brief's rule. A unit test compares the serialized
+  prepared `FspResult` with the vendored solver's, byte for byte, over the
+  projection test grid.
+- Result: 2.308 ms before, 1.237 ms after, 1.87x (`round06-trace.json`).
+  Kept. `validate.py` (which compares traced FSP probabilities with a
+  dense matrix exponential) passed, and the traced CLI request printed
+  the same bytes as the 0.2.0 CLI.

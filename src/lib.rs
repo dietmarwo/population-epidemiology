@@ -689,9 +689,20 @@ mod tests {
             {"id":"range","parameters":[5.5,0.4]},
         ])
         .to_string();
+        let traced = json!([
+            {"id":"fit","parameters":[0.7,0.4],"trace":true},
+            {"id":"fast","parameters":[5.0,5.0],"trace":true},
+            {"id":"zero-beta","parameters":[0.0,0.4],"trace":true},
+            {"id":"plain","parameters":[0.9,0.5]},
+        ])
+        .to_string();
         for model in models {
             example["model"] = model;
             let prepared = Prepared::new(&example["model"].to_string()).unwrap();
+            assert_eq!(
+                prepared.evaluate_json(&traced, "{}").unwrap(),
+                prepared.evaluate_json(&traced, &reference).unwrap()
+            );
             for metrics in [true, false] {
                 let run = |budget: &str| {
                     if metrics {

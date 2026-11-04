@@ -1,4 +1,4 @@
-use crate::sir_fsp::{self, Projection, Solution};
+use crate::sir_fsp::{self, Detail, Projection, Solution};
 use crate::{Evaluation, Work, infeasible, invalid};
 use serde::Deserialize;
 use serde_json::{Value, json, value::RawValue};
@@ -94,7 +94,7 @@ pub fn prepare(input: Input) -> Result<Model, String> {
             let (model, run) = sir_documents(initial, sample_times, *tolerance, 1.0, 1.0, None);
             if crn_craft::check_bytes(model.as_bytes(), Some(run.as_bytes())).valid {
                 let projection = Projection::new(initial, sample_times, *tolerance);
-                if projection.output_bound() <= u128::from(sir_fsp::MAX_OUTPUT_BYTES) {
+                if projection.fits_budgets() {
                     sir = Some(projection);
                 }
             }
@@ -219,15 +219,22 @@ pub fn evaluate(model: &Model, parameters: &[f64], trace: bool, work: &mut Work<
             let n = susceptible + infected + recovered;
             let initial = [*susceptible, *infected, *recovered];
             let infection = beta / f64::from(n);
+            let detail = if trace {
+                Detail::Trace
+            } else if work.metrics_enabled {
+                Detail::Diagnostics
+            } else {
+                Detail::Means
+            };
             let prepared = model
                 .sir
                 .as_ref()
-                .filter(|_| !work.monitored && !trace)
-                .and_then(|p| p.solve(infection, gamma, work.metrics_enabled));
+                .filter(|_| !work.monitored)
+                .and_then(|p| p.solve(infection, gamma, detail));
             let solved = match prepared {
-                Some(solution) => {
-                    let (model_sha256, run_sha256) = if work.metrics_enabled {
-                        let (model, run) = sir_documents(
+                Some(mut solution) => {
+                    let hashes = (work.metrics_enabled || trace).then(|| {
+                        let (model_bytes, run_bytes) = sir_documents(
                             initial,
                             sample_times,
                             *tolerance,
@@ -236,19 +243,30 @@ pub fn evaluate(model: &Model, parameters: &[f64], trace: bool, work: &mut Work<
                             None,
                         );
                         (
-                            Some(crn_craft::sha256(model.as_bytes())),
-                            Some(crn_craft::sha256(run.as_bytes())),
+                            crn_craft::sha256(model_bytes.as_bytes()),
+                            crn_craft::sha256(run_bytes.as_bytes()),
                         )
-                    } else {
-                        (None, None)
-                    };
+                    });
+                    let trace = solution.trace.take().map(|t| crn_craft::fsp::FspResult {
+                        schema: crn_craft::fsp::FspVersion::V01,
+                        model_sha256: hashes.as_ref().expect("trace hashes").0.clone(),
+                        run_sha256: hashes.as_ref().expect("trace hashes").1.clone(),
+                        species: ["S", "I", "R"].map(String::from).to_vec(),
+                        states: t.states,
+                        snapshots: t.snapshots,
+                        uniformization_rate: t.uniformization_rate,
+                        sparse_edges: t.sparse_edges,
+                        work: solution.work,
+                        numerical_error_certified: false,
+                    });
+                    let (model_sha256, run_sha256) = hashes.unzip();
                     Ok(Solved {
                         solution,
                         model_sha256,
                         run_sha256,
                         // The vendored solver never certifies its numerical error.
                         certified: false,
-                        trace: None,
+                        trace,
                     })
                 }
                 None => {
@@ -281,6 +299,7 @@ pub fn evaluate(model: &Model, parameters: &[f64], trace: bool, work: &mut Work<
                                 })
                                 .collect(),
                             work: out.work,
+                            trace: None,
                         };
                         Solved {
                             solution,

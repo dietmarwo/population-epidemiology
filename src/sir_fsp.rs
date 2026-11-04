@@ -10,7 +10,7 @@
 //! diagnostics and the FSP work count are bit-identical to the vendored
 //! solver. Whenever a candidate reaches a condition that this kernel does not
 //! reproduce, `solve` returns `None` and the caller runs the vendored solver.
-use crn_craft::fsp::MAX_WORK;
+use crn_craft::fsp::{FspSnapshot, MAX_WORK};
 use std::collections::HashMap;
 
 /// The output budget the SIR run document declares.
@@ -22,7 +22,9 @@ const REACTIONS: usize = 2;
 
 /// Rate-independent SIR projection structure.
 pub struct Projection {
-    /// Susceptible and infected counts per state, in CRN-craft discovery order.
+    /// Counts per state, in CRN-craft discovery order.
+    counts: Vec<[i64; SPECIES]>,
+    /// Susceptible and infected counts per state as floating-point values.
     susceptible: Vec<f64>,
     infected: Vec<f64>,
     /// Target state of each state's infection and recovery transition.
@@ -45,6 +47,17 @@ enum Entry {
     Recovery,
 }
 
+/// How much of a solution to record.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Detail {
+    /// Infected means only.
+    Means,
+    /// Means and per-snapshot error diagnostics.
+    Diagnostics,
+    /// Diagnostics and the vendored solver's full trace.
+    Trace,
+}
+
 /// Per-sample-time output of one rate binding.
 pub struct Solution {
     /// Projected first moment of the infected count at each sample time.
@@ -54,6 +67,16 @@ pub struct Solution {
     pub errors: Vec<[f64; 4]>,
     /// The vendored solver's work count.
     pub work: u64,
+    /// The rest of the vendored solver's result in trace mode.
+    pub trace: Option<Trace>,
+}
+
+/// Rate-dependent parts of `crn_craft::fsp::FspResult` other than hashes.
+pub struct Trace {
+    pub states: Vec<Vec<i64>>,
+    pub snapshots: Vec<FspSnapshot>,
+    pub uniformization_rate: f64,
+    pub sparse_edges: usize,
 }
 
 impl Projection {
@@ -118,7 +141,24 @@ impl Projection {
             entries,
             times: times.to_vec(),
             tolerance,
+            counts: states,
         }
+    }
+
+    /// Whether the vendored solver's rate-independent output and workspace
+    /// checks pass for this structure, so they cannot fail for a binding.
+    pub fn fits_budgets(&self) -> bool {
+        let n = self.infected.len() as u128;
+        let t = self.times.len() as u128;
+        let species = SPECIES as u128;
+        let reserve = n * (species * 24 + 32) + n * t * 32 + t * (species * 48 + 400) + 16384;
+        let memory = n * (species * 32 + 128)
+            + self.edges as u128 * 64
+            + n * (t * 8 + 64)
+            + t * (species * 16 + 256);
+        reserve <= u128::from(MAX_OUTPUT_BYTES)
+            && memory <= 256 * 1024 * 1024
+            && self.output_bound() <= u128::from(MAX_OUTPUT_BYTES)
     }
 
     /// Number of projected states.
@@ -138,7 +178,9 @@ impl Projection {
 
     /// Solve one binding of the mass-action coefficients, or return `None`
     /// when the vendored solver must decide the outcome.
-    pub fn solve(&self, infection: f64, gamma: f64, diagnostics: bool) -> Option<Solution> {
+    pub fn solve(&self, infection: f64, gamma: f64, detail: Detail) -> Option<Solution> {
+        let diagnostics = detail != Detail::Means;
+        let traced = detail == Detail::Trace;
         if !infection.is_normal() || !gamma.is_normal() || infection < 0.0 || gamma < 0.0 {
             return None;
         }
@@ -230,6 +272,7 @@ impl Projection {
         p[0] = 1.0;
         let mut means = Vec::with_capacity(self.times.len());
         let mut errors = Vec::with_capacity(if diagnostics { self.times.len() } else { 0 });
+        let mut snapshots = Vec::with_capacity(if traced { self.times.len() } else { 0 });
         let mut tail_bound = 0.0;
         let mut discarded = 0.0;
         let mut previous = 0.0;
@@ -283,15 +326,52 @@ impl Projection {
                 return None;
             }
             means.push(self.infected.iter().zip(&p).map(|(x, q)| x * q).sum());
+            if traced {
+                // The vendored solver's snapshot, field by field.
+                snapshots.push(FspSnapshot {
+                    time,
+                    probabilities: p[..n].to_vec(),
+                    physical_leakage_estimate: p[n],
+                    projected_first_moment: (0..SPECIES)
+                        .map(|j| {
+                            self.counts
+                                .iter()
+                                .zip(&p)
+                                .map(|(x, q)| x[j] as f64 * q)
+                                .sum()
+                        })
+                        .collect(),
+                    projected_second_raw_moment: (0..SPECIES)
+                        .map(|j| {
+                            self.counts
+                                .iter()
+                                .zip(&p)
+                                .map(|(x, q)| (x[j] as f64).powi(2) * q)
+                                .sum()
+                        })
+                        .collect(),
+                    series_tail_upper_bound: tail_bound,
+                    discarded_weight_estimate: discarded,
+                    mass_defect: 1.0 - mass,
+                    roundoff_mass_residual: (1.0 - mass - discarded).abs(),
+                });
+            }
             if diagnostics {
                 errors.push([p[n], tail_bound, 1.0 - mass, (1.0 - mass - discarded).abs()]);
             }
             previous = time;
         }
+        let trace = traced.then(|| Trace {
+            states: self.counts.iter().map(|x| x.to_vec()).collect(),
+            snapshots,
+            uniformization_rate: lambda,
+            sparse_edges: self.edges,
+        });
         Some(Solution {
             means,
             errors,
             work,
+            trace,
         })
     }
 }
@@ -348,7 +428,7 @@ mod tests {
         let control = crn_craft::simulation::Control::default();
         let reference = crn_craft::fsp::solve(model.as_bytes(), run.as_bytes(), &control);
         let projection = Projection::new(initial, times, tolerance);
-        let fast = projection.solve(infection, gamma, true);
+        let fast = projection.solve(infection, gamma, Detail::Diagnostics);
         let label = format!("{initial:?} {times:?} {tolerance} {beta} {gamma}");
         let Ok(out) = reference else {
             assert!(fast.is_none(), "{label}");
@@ -379,9 +459,31 @@ mod tests {
             assert_eq!(bits(e), bits(&expected), "{label}");
         }
         assert_eq!(fast.errors.len(), out.snapshots.len());
-        let lean = projection.solve(infection, gamma, false).unwrap();
+        let lean = projection.solve(infection, gamma, Detail::Means).unwrap();
         assert_eq!(bits(&lean.means), bits(&means), "{label}");
-        assert!(lean.errors.is_empty());
+        assert!(lean.errors.is_empty() && lean.trace.is_none());
+        // The traced binding reproduces the solver's serialized result.
+        let traced = projection.solve(infection, gamma, Detail::Trace).unwrap();
+        assert_eq!(bits(&traced.means), bits(&means), "{label}");
+        let trace = traced.trace.unwrap();
+        let rebuilt = crn_craft::fsp::FspResult {
+            schema: crn_craft::fsp::FspVersion::V01,
+            model_sha256: crn_craft::sha256(model.as_bytes()),
+            run_sha256: crn_craft::sha256(run.as_bytes()),
+            species: ["S", "I", "R"].map(String::from).to_vec(),
+            states: trace.states,
+            snapshots: trace.snapshots,
+            uniformization_rate: trace.uniformization_rate,
+            sparse_edges: trace.sparse_edges,
+            work: traced.work,
+            numerical_error_certified: false,
+        };
+        assert_eq!(
+            serde_json::to_string(&rebuilt).unwrap(),
+            serde_json::to_string(&out).unwrap(),
+            "{label}"
+        );
+        assert!(projection.fits_budgets());
         assert!(projection.output_bound() > serde_json::to_string(&out).unwrap().len() as u128);
     }
 
@@ -432,8 +534,8 @@ mod tests {
             (0.1, f64::NAN),
             (-0.1, 0.4),
         ] {
-            assert!(projection.solve(infection, gamma, true).is_none());
+            assert!(projection.solve(infection, gamma, Detail::Trace).is_none());
         }
-        assert!(projection.solve(0.1, 0.4, true).is_some());
+        assert!(projection.solve(0.1, 0.4, Detail::Trace).is_some());
     }
 }
