@@ -1,6 +1,6 @@
 model: {'susceptible': 9, 'infected': 2, 'recovered': 1, 'train_count': 3}
 sample times: [0.0, 1.0, 2.0, 3.0, 5.0]
-evaluated 1681 rate pairs in 27.0 ms (16.0 us per candidate, 2 logical steps each)
+evaluated 1681 rate pairs in 31.8 ms (18.9 us per candidate, 2 logical steps each)
 
 best grid points (training MSE of the expected infected count):
   beta    gamma   R0      train MSE

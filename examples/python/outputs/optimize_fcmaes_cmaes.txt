@@ -1,4 +1,4 @@
-CMA-ES: 928 evaluations in 58 generations, 0 penalized rows, 129 ms
+CMA-ES: 928 evaluations in 58 generations, 0 penalized rows, 134 ms
 estimate beta 1.0914 gamma 0.3472 (truth [1.1, 0.35]), R0 3.144
 train MSE 0.0111 holdout MSE 0.0201
 at the truth: train MSE 0.0116 holdout MSE 0.0221
