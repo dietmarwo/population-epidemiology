@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "population-epidemiology"
-version = "0.2.0"
+version = "0.3.0"
 requires-python = ">=3.10"
 description = "Prepared population-epidemiology research evaluations"
 
@@ -17,4 +17,7 @@ include = [
   { path = "models/*.json", format = "sdist" },
   { path = "docs/*.md", format = "sdist" },
   { path = "validation/*.py", format = "sdist" },
+]
+exclude = [
+  { path = "vendor/crn-craft/target/**/*", format = "sdist" },
 ]

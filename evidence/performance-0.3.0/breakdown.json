@@ -1,0 +1,112 @@
+{
+  "available_parallelism": 2,
+  "sir_96_worker_scaling": [
+    {
+      "full_us": 2754.38625,
+      "lean_us": 1607.5672499999998,
+      "matrix_us": 1459.216,
+      "workers": 1
+    },
+    {
+      "full_us": 1714.362,
+      "lean_us": 946.34825,
+      "matrix_us": 986.6194999999999,
+      "workers": 2
+    },
+    {
+      "full_us": 1904.803,
+      "lean_us": 1049.93975,
+      "matrix_us": 955.481,
+      "workers": 4
+    }
+  ],
+  "sir_one_candidate": {
+    "prepared_lean_us": 16.136020000000002,
+    "prepared_traced_full_us": 46.500789999999995,
+    "vendored_solver_lean_us": 154.61738,
+    "vendored_solver_traced_full_us": 173.32515
+  },
+  "unit": "median microseconds per call",
+  "workloads": [
+    {
+      "candidates": 1,
+      "decode_us": 0.14567,
+      "encode_and_checks_us": 0.6709549999999984,
+      "full_metrics_us": 12.516850000000003,
+      "full_output_bytes": 1374,
+      "full_us": 28.046310000000002,
+      "full_us_per_candidate": 28.046310000000002,
+      "lean_json_boundary_us": 0.8166249999999984,
+      "lean_us": 15.529459999999998,
+      "lean_us_per_candidate": 15.529459999999998,
+      "matrix_us": 14.712835,
+      "matrix_us_per_candidate": 14.712835,
+      "prepare_us": 62.06984500000001,
+      "workload": "one (SIR)"
+    },
+    {
+      "candidates": 96,
+      "decode_us": 13.164,
+      "encode_and_checks_us": 7.660000000000069,
+      "full_metrics_us": 987.2274999999997,
+      "full_output_bytes": 117012,
+      "full_us": 2079.47675,
+      "full_us_per_candidate": 21.661216145833333,
+      "lean_json_boundary_us": 20.82400000000007,
+      "lean_us": 1092.24925,
+      "lean_us_per_candidate": 11.377596354166668,
+      "matrix_us": 1071.42525,
+      "matrix_us_per_candidate": 11.1606796875,
+      "prepare_us": 48.1568,
+      "workload": "serial (SIR)"
+    },
+    {
+      "candidates": 1024,
+      "decode_us": 1141.91675,
+      "encode_and_checks_us": 292.59124999999995,
+      "full_metrics_us": 7.763750000000073,
+      "full_output_bytes": 133279,
+      "full_us": 1466.10625,
+      "full_us_per_candidate": 1.431744384765625,
+      "lean_json_boundary_us": 1434.508,
+      "lean_us": 1458.3425,
+      "lean_us_per_candidate": 1.42416259765625,
+      "matrix_us": 23.834500000000002,
+      "matrix_us_per_candidate": 0.023275878906250002,
+      "prepare_us": 51.034800000000004,
+      "workload": "invalid (SIR, 63 values)"
+    },
+    {
+      "candidates": 48,
+      "decode_us": 5.396,
+      "encode_and_checks_us": 16.600750000000247,
+      "full_metrics_us": 172.66249999999945,
+      "full_output_bytes": 46815,
+      "full_us": 2473.0429999999997,
+      "full_us_per_candidate": 51.52172916666666,
+      "lean_json_boundary_us": 21.996750000000247,
+      "lean_us": 2300.3805,
+      "lean_us_per_candidate": 47.92459375000001,
+      "matrix_us": 2278.38375,
+      "matrix_us_per_candidate": 47.466328125,
+      "prepare_us": 15.177600000000002,
+      "workload": "domain (Moran)"
+    },
+    {
+      "candidates": 48,
+      "decode_us": 4.349200000000001,
+      "encode_and_checks_us": 7.914149999999997,
+      "full_metrics_us": 25.98995,
+      "full_output_bytes": 449679,
+      "full_us": 39.004075,
+      "full_us_per_candidate": 0.8125848958333334,
+      "lean_json_boundary_us": 12.263349999999997,
+      "lean_us": 13.014124999999998,
+      "lean_us_per_candidate": 0.27112760416666665,
+      "matrix_us": 0.7507750000000001,
+      "matrix_us_per_candidate": 0.015641145833333335,
+      "prepare_us": 152.538375,
+      "workload": "domain2 (calendar)"
+    }
+  ]
+}

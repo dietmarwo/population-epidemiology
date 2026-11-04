@@ -1,6 +1,6 @@
 # Population epidemiology tutorial
 
-Evaluate a small, fixed-population SIR model, neutral two-mutant Moran drift, and an exact two-state rate calendar. This guide uses the examples shipped with version 0.2.0.
+Evaluate a small, fixed-population SIR model, neutral two-mutant Moran drift, and an exact two-state rate calendar. This guide uses the examples shipped with version 0.3.0. The [user manual](user-manual.md) is the complete reference.
 
 ## 1. Install and run the example
 
@@ -110,14 +110,28 @@ Replace the duplicate vectors with distinct choices for a real search.
 Use `batch` if you need the full metrics for every row. `scores` returns
 ordered records with score, status, steps and detail, and `metrics: null`.
 It rejects any candidate with `trace: true`. A one-worker batch or a
-singleton runs inline. Larger batches can try two or four workers.
+singleton runs inline. Larger batches can use up to one worker per CPU.
 Measure before setting a worker count for a real workload.
+
+Inside an optimizer, `score_matrix` skips JSON entirely. It takes a list
+of equal-length parameter rows or a 2-D NumPy array and returns three
+lists: scores (NaN unless complete), statuses and logical steps. They
+match what `scores` reports for the same vectors, bit for bit.
+
+```python
+rows = [case["parameters"], [0.9, 0.5], [6.0, 0.4]]
+values, statuses, steps = prepared.score_matrix(rows, workers=2)
+print(values, statuses, steps)
+assert statuses == ["complete", "complete", "invalid"]
+penalized = [v if s == "complete" else 1e20 for v, s in zip(values, statuses)]
+```
 
 The optional differential-evolution driver times preparation, seeded
 search and traced replay as one run. Install SciPy for this example.
 
 ```sh
 python -m pip install scipy
+python validation/optimize_performance.py population_epidemiology --matrix
 python validation/optimize_performance.py population_epidemiology --scores
 python validation/optimize_performance.py population_epidemiology
 ```
@@ -125,6 +139,8 @@ python validation/optimize_performance.py population_epidemiology
 The driver uses small local bounds and a short fixed search budget.
 For a scientific result, use problem-specific bounds, an explicit
 feasibility penalty or constraint policy, and a held-out evaluation.
+`examples/python/` has complete SciPy and fcmaes examples that score whole
+populations with `score_matrix`.
 
 ## 4. Run and resume a local campaign
 
@@ -149,26 +165,32 @@ cargo build --release --locked --bins --examples
 target/release/population-epidemiology describe
 target/release/population-epidemiology run models/request.json
 target/release/examples/sweep models/example.json
+target/release/examples/matrix_scan models/example.json
 target/release/examples/performance models/example.json serial
 CRAFT_SCORES=1 target/release/examples/performance models/example.json serial
+CRAFT_MATRIX=1 target/release/examples/performance models/example.json serial
+target/release/examples/breakdown models/example.json
 ```
 
 The CLI reads a request file or standard input with `run -`. Exit code
 0 indicates complete rows, 1 indicates a rejected request and 2
 indicates one or more unsuccessful rows in a well-formed request.
 The benchmark prints elapsed seconds per prepared batch after warm-up.
-Use `parallel` for four workers, `trace` for traced evaluations,
+`CRAFT_SCORES=1` selects the lean API and `CRAFT_MATRIX=1` the typed
+matrix API. Use `parallel` for four workers, `trace` for traced evaluations,
 or `domain` and `domain2` for the package's supplemental cases.
 With a previous benchmark executable built from the baseline and this
 one, `validation/performance_pair.py BEFORE AFTER models/example.json serial`
-checks output parity and times both. See the included performance log
+checks output parity and times both; `--before-scores`, `--after-scores`,
+`--before-matrix` and `--after-matrix` pick each side's API.
+`breakdown` prints where a call's time goes, as JSON. See the included performance log
 and raw evidence for the exact workloads and comparison boundaries.
 
 ## 6. Verify results
 
 ```sh
 cargo test --release --locked
-cargo clippy --locked --all-targets --features python -- -D warnings
+PYO3_PYTHON=python3.12 cargo clippy --release --locked --all-targets --features python -- -D warnings
 python validation/validate.py target/release/population-epidemiology
 ```
 

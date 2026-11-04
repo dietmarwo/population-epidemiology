@@ -1,10 +1,18 @@
 [package]
 name = "population-epidemiology"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.88"
 description = "Bounded population-epidemiology research evaluator"
 license = "MIT"
+# Release artifacts, patch series and timing evidence stay out of the source distribution.
+exclude = [
+  "/packages/",
+  "/patches/",
+  "/evidence/performance-0.3.0/",
+  "/evidence/release-*/",
+  "/SHA256SUMS",
+]
 
 [lib]
 crate-type = ["rlib", "cdylib"]

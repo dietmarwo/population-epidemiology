@@ -1,0 +1,5 @@
+bitecpp.minimize: 1500 evaluations, 18 penalized, 304 ms
+  beta 1.0914 gamma 0.3472 train MSE 0.0111 holdout MSE 0.0201
+cmaescpp.minimize: 736 evaluations, 0 penalized, 141 ms
+  beta 1.0914 gamma 0.3472 train MSE 0.0111 holdout MSE 0.0201
+truth: [1.1, 0.35]

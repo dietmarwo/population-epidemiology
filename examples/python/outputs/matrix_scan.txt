@@ -1,0 +1,2 @@
+441 of 441 rows complete; best beta 0.70 gamma 0.40 score 2.000e-24
+replay holdout MSE 4.398290550445194e-24

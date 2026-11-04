@@ -6,7 +6,12 @@ Both rates are per input time unit. CRN-craft FSP enumerates reachable
 count states and propagates the finite distribution. Bounds cover the
 entire fixed population. Its result exposes physical leakage, Poisson
 series bounds and the roundoff mass residual. It preserves unnormalized
-probabilities. Trace mode includes the original FSP result.
+probabilities. Trace mode includes the full FSP result. Since 0.3.0 the
+package builds the SIR state space and generator layout once per model and
+runs the same uniformization arithmetic for each rate binding, so means,
+diagnostics, traces and work counts are bit-identical to the vendored
+CRN-craft solver, which still runs for deadline or cancel-file budgets
+and for zero rates.
 
 The fitting target is the model's expected infected count at declared
 sample times. Training uses mean squared error over unmasked observations.
