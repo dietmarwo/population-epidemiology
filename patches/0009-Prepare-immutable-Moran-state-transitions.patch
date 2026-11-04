@@ -1,0 +1,176 @@
+From 42605328db4b552236a97317ce98abdcd99331a6 Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Wed, 4 Nov 2026 02:52:32 +0100
+Subject: [PATCH 09/12] Prepare immutable Moran state transitions
+
+---
+ src/domain.rs | 82 +++++++++++++++++++++++++++++++++++----------------
+ 1 file changed, 57 insertions(+), 25 deletions(-)
+
+diff --git a/src/domain.rs b/src/domain.rs
+index 32a557a..2f4d6b6 100644
+--- a/src/domain.rs
++++ b/src/domain.rs
+@@ -9,7 +9,7 @@ pub const CAPABILITIES: &[&str] = &[
+ ];
+ #[derive(Deserialize)]
+ #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+-pub enum Model {
++pub enum Input {
+     Sir {
+         susceptible: u32,
+         infected: u32,
+@@ -37,9 +37,20 @@ pub struct Segment {
+     on_rate: f64,
+     off_rate: f64,
+ }
+-pub fn prepare(model: Model) -> Result<Model, String> {
+-    match &model {
+-        Model::Sir {
++pub struct Model {
++    input: Input,
++    moran: Option<Moran>,
++}
++struct Moran {
++    states: Vec<(usize, usize)>,
++    rows: Vec<Vec<(usize, f64)>>,
++    initial: usize,
++}
++
++pub fn prepare(input: Input) -> Result<Model, String> {
++    let mut moran = None;
++    match &input {
++        Input::Sir {
+             susceptible,
+             infected,
+             recovered,
+@@ -67,7 +78,7 @@ pub fn prepare(model: Model) -> Result<Model, String> {
+                 return Err("invalid SIR population, time grid, observations or tolerance".into());
+             }
+         }
+-        Model::Moran {
++        Input::Moran {
+             population,
+             mutant_a,
+             mutant_b,
+@@ -81,8 +92,9 @@ pub fn prepare(model: Model) -> Result<Model, String> {
+             {
+                 return Err("invalid Moran state or update count".into());
+             }
++            moran = Some(prepare_moran(*population, *mutant_a, *mutant_b));
+         }
+-        Model::Calendar {
++        Input::Calendar {
+             initial_on_probability,
+             segments,
+         } => {
+@@ -99,12 +111,12 @@ pub fn prepare(model: Model) -> Result<Model, String> {
+             }
+         }
+     }
+-    Ok(model)
++    Ok(Model { input, moran })
+ }
+ 
+ pub fn evaluate(model: &Model, c: &Candidate, work: &mut Work<'_>) -> Evaluation {
+-    match model {
+-        Model::Sir {
++    match &model.input {
++        Input::Sir {
+             susceptible,
+             infected,
+             recovered,
+@@ -183,18 +195,23 @@ pub fn evaluate(model: &Model, c: &Candidate, work: &mut Work<'_>) -> Evaluation
+                 "crn_run_sha256":run_hash,"fsp":c.trace.then_some(out)})),
+             ))
+         }
+-        Model::Moran {
++        Input::Moran {
+             population,
+-            mutant_a,
+-            mutant_b,
+             updates,
++            ..
+         } => {
+             if !c.parameters.is_empty() {
+                 return Err(invalid("neutral Moran has no candidate parameters"));
+             }
+-            moran(*population, *mutant_a, *mutant_b, *updates, c.trace, work)
++            moran(
++                model.moran.as_ref().expect("prepared transitions"),
++                *population,
++                *updates,
++                c.trace,
++                work,
++            )
+         }
+-        Model::Calendar {
++        Input::Calendar {
+             initial_on_probability,
+             segments,
+         } => {
+@@ -222,14 +239,7 @@ pub fn evaluate(model: &Model, c: &Candidate, work: &mut Work<'_>) -> Evaluation
+     }
+ }
+ 
+-fn moran(
+-    n: usize,
+-    a0: usize,
+-    b0: usize,
+-    updates: usize,
+-    trace: bool,
+-    work: &mut Work<'_>,
+-) -> Evaluation {
++fn prepare_moran(n: usize, a0: usize, b0: usize) -> Moran {
+     let states: Vec<_> = (0..=n)
+         .flat_map(|a| (0..=n - a).map(move |b| (a, b)))
+         .collect();
+@@ -237,7 +247,6 @@ fn moran(
+     let denom = (n * n) as f64;
+     let mut rows = Vec::with_capacity(states.len());
+     for &(a, b) in &states {
+-        work.step()?;
+         let counts = [n - a - b, a, b];
+         let mut row = Vec::new();
+         for parent in 0..3 {
+@@ -256,12 +265,35 @@ fn moran(
+         }
+         rows.push(row);
+     }
++    Moran {
++        states,
++        rows,
++        initial: index(a0, b0),
++    }
++}
++
++fn moran(
++    topology: &Moran,
++    n: usize,
++    updates: usize,
++    trace: bool,
++    work: &mut Work<'_>,
++) -> Evaluation {
++    let Moran {
++        states,
++        rows,
++        initial,
++    } = topology;
++    // Charge the same logical row visits as the cold construction.
++    for _ in states {
++        work.step()?;
++    }
+     let mut law = vec![0.0; states.len()];
+     let mut next = vec![0.0; states.len()];
+-    law[index(a0, b0)] = 1.0;
++    law[*initial] = 1.0;
+     for _ in 0..updates {
+         next.fill(0.0);
+-        for (&mass, row) in law.iter().zip(&rows) {
++        for (&mass, row) in law.iter().zip(rows) {
+             work.step()?;
+             if mass == 0.0 {
+                 continue;
+-- 
+2.51.1
+

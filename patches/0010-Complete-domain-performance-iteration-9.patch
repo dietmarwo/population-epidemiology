@@ -1,0 +1,87 @@
+From 030909928ed9a8ddf3c3c79bc0baa56fb223b57b Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Wed, 4 Nov 2026 02:54:35 +0100
+Subject: [PATCH 10/12] Complete domain performance iteration 9
+
+---
+ src/domain.rs | 22 +++++++++++++---------
+ 1 file changed, 13 insertions(+), 9 deletions(-)
+
+diff --git a/src/domain.rs b/src/domain.rs
+index 2f4d6b6..c3b11c8 100644
+--- a/src/domain.rs
++++ b/src/domain.rs
+@@ -43,7 +43,8 @@ pub struct Model {
+ }
+ struct Moran {
+     states: Vec<(usize, usize)>,
+-    rows: Vec<Vec<(usize, f64)>>,
++    offsets: Vec<usize>,
++    transitions: Vec<(usize, f64)>,
+     initial: usize,
+ }
+ 
+@@ -245,10 +246,11 @@ fn prepare_moran(n: usize, a0: usize, b0: usize) -> Moran {
+         .collect();
+     let index = |a: usize, b: usize| a * (n + 1) - a * a.saturating_sub(1) / 2 + b;
+     let denom = (n * n) as f64;
+-    let mut rows = Vec::with_capacity(states.len());
++    let mut offsets = Vec::with_capacity(states.len() + 1);
++    let mut transitions = Vec::with_capacity(states.len() * 9);
+     for &(a, b) in &states {
+         let counts = [n - a - b, a, b];
+-        let mut row = Vec::new();
++        offsets.push(transitions.len());
+         for parent in 0..3 {
+             for death in 0..3 {
+                 if counts[parent] == 0 || counts[death] == 0 {
+@@ -257,17 +259,18 @@ fn prepare_moran(n: usize, a0: usize, b0: usize) -> Moran {
+                 let mut next = counts;
+                 next[parent] += 1;
+                 next[death] -= 1;
+-                row.push((
++                transitions.push((
+                     index(next[1], next[2]),
+                     (counts[parent] * counts[death]) as f64 / denom,
+                 ));
+             }
+         }
+-        rows.push(row);
+     }
++    offsets.push(transitions.len());
+     Moran {
+         states,
+-        rows,
++        offsets,
++        transitions,
+         initial: index(a0, b0),
+     }
+ }
+@@ -281,7 +284,8 @@ fn moran(
+ ) -> Evaluation {
+     let Moran {
+         states,
+-        rows,
++        offsets,
++        transitions,
+         initial,
+     } = topology;
+     // Charge the same logical row visits as the cold construction.
+@@ -293,12 +297,12 @@ fn moran(
+     law[*initial] = 1.0;
+     for _ in 0..updates {
+         next.fill(0.0);
+-        for (&mass, row) in law.iter().zip(rows) {
++        for (&mass, offset) in law.iter().zip(offsets.windows(2)) {
+             work.step()?;
+             if mass == 0.0 {
+                 continue;
+             }
+-            for &(to, p) in row {
++            for &(to, p) in &transitions[offset[0]..offset[1]] {
+                 next[to] += mass * p;
+             }
+         }
+-- 
+2.51.1
+

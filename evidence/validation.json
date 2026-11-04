@@ -1,0 +1,57 @@
+{
+  "calendar": {
+    "boundary_time_and_on_probability": [
+      [
+        1.0,
+        0.2591817793182821
+      ],
+      [
+        3.0,
+        0.11645788041914201
+      ]
+    ]
+  },
+  "fit_candidates": 12,
+  "fsp_budget": [
+    {
+      "mass_defect": 0.0,
+      "physical_leakage": 0.0,
+      "roundoff_mass_residual": 0.0,
+      "series_tail_upper_bound": 0.0
+    },
+    {
+      "mass_defect": 1.1042278202921807e-12,
+      "physical_leakage": 0.0,
+      "roundoff_mass_residual": 3.317702044960025e-17,
+      "series_tail_upper_bound": 1.105729108595145e-12
+    },
+    {
+      "mass_defect": 2.207900529072049e-12,
+      "physical_leakage": 0.0,
+      "roundoff_mass_residual": 6.214655519924144e-16,
+      "series_tail_upper_bound": 2.21145821719029e-12
+    },
+    {
+      "mass_defect": 3.312461416271617e-12,
+      "physical_leakage": 0.0,
+      "roundoff_mass_residual": 3.2157566261634474e-16,
+      "series_tail_upper_bound": 3.317187325785435e-12
+    },
+    {
+      "mass_defect": 4.765521310901022e-12,
+      "physical_leakage": 0.0,
+      "roundoff_mass_residual": 4.7727448340799265e-17,
+      "series_tail_upper_bound": 4.773320349126062e-12
+    }
+  ],
+  "holdout_mse": 4.398290550445194e-24,
+  "max_fsp_state_error": 8.908707105348412e-13,
+  "moran_mass": 1.0,
+  "neutral_fixation": 0.3333333333333331,
+  "sir_state_count": 75,
+  "tight_holdout_mse": 7.309289324938438e-29,
+  "winner": [
+    0.7,
+    0.4
+  ]
+}

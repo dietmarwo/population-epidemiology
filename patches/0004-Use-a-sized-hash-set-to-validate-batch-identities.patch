@@ -1,0 +1,34 @@
+From 3cfd11b51999ce8965d0c752796aa98f69caebfc Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Wed, 4 Nov 2026 02:44:24 +0100
+Subject: [PATCH 04/12] Use a sized hash set to validate batch identities
+
+---
+ src/lib.rs | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/src/lib.rs b/src/lib.rs
+index 7db0e53..12f342b 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
+ use serde_json::{Value, json, value::RawValue};
+ use sha2::{Digest, Sha256};
+ use std::{
+-    collections::BTreeSet,
++    collections::HashSet,
+     path::PathBuf,
+     sync::{
+         OnceLock,
+@@ -177,7 +177,7 @@ impl Prepared {
+         {
+             return Err("invalid budget or batch size".into());
+         }
+-        let mut seen = BTreeSet::new();
++        let mut seen = HashSet::with_capacity(candidates.len());
+         for c in &candidates {
+             if c.id.is_empty() || c.id.len() > 128 || !seen.insert(&c.id) || c.parameters.len() > 64
+             {
+-- 
+2.51.1
+

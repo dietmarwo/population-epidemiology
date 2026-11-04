@@ -1,0 +1,147 @@
+From 982e547cb3641114f0aaf846299e32ec80c2de6f Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Wed, 4 Nov 2026 02:43:39 +0100
+Subject: [PATCH 02/12] Run single-worker and singleton batches inline
+
+---
+ src/lib.rs | 117 +++++++++++++++++++++++++++++------------------------
+ 1 file changed, 64 insertions(+), 53 deletions(-)
+
+diff --git a/src/lib.rs b/src/lib.rs
+index 84602b1..0d7511c 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -131,6 +131,40 @@ impl Prepared {
+         serde_json::to_string(&self.evaluate(candidates, budget)?).map_err(|e| e.to_string())
+     }
+ 
++    fn record(&self, c: &Candidate, budget: &Budget, deadline: Option<Instant>) -> Record {
++        let mut work = Work {
++            budget,
++            deadline,
++            used: 0,
++        };
++        let result = domain::evaluate(&self.model, c, &mut work);
++        let result = result.and_then(|(score, metrics)| {
++            if score.is_finite() {
++                Ok((score, metrics))
++            } else {
++                Err(invalid("nonfinite objective"))
++            }
++        });
++        match result {
++            Ok((score, metrics)) => Record {
++                id: c.id.clone(),
++                status: "complete",
++                steps: work.used,
++                score: Some(score),
++                metrics: Some(metrics),
++                detail: None,
++            },
++            Err(e) => Record {
++                id: c.id.clone(),
++                status: e.status,
++                steps: work.used,
++                score: None,
++                metrics: e.metrics,
++                detail: Some(e.detail),
++            },
++        }
++    }
++
+     fn evaluate(&self, candidates: Vec<Candidate>, budget: Budget) -> Result<Value, String> {
+         if !(1..=64).contains(&budget.workers)
+             || !(1..=100_000_000).contains(&budget.max_steps)
+@@ -155,59 +189,36 @@ impl Prepared {
+         let deadline = budget
+             .wall_ms
+             .map(|n| Instant::now() + Duration::from_millis(n));
+-        let next = AtomicUsize::new(0);
+-        let mut records = std::thread::scope(|scope| {
+-            let mut jobs = Vec::new();
+-            for _ in 0..budget.workers.min(candidates.len()) {
+-                jobs.push(scope.spawn(|| {
+-                    let mut rows = Vec::new();
+-                    loop {
+-                        let index = next.fetch_add(1, Ordering::Relaxed);
+-                        let Some(c) = candidates.get(index) else {
+-                            break;
+-                        };
+-                        let mut work = Work {
+-                            budget: &budget,
+-                            deadline,
+-                            used: 0,
+-                        };
+-                        let result = domain::evaluate(&self.model, c, &mut work);
+-                        let result = result.and_then(|(score, metrics)| {
+-                            if score.is_finite() {
+-                                Ok((score, metrics))
+-                            } else {
+-                                Err(invalid("nonfinite objective"))
+-                            }
+-                        });
+-                        let record = match result {
+-                            Ok((score, metrics)) => Record {
+-                                id: c.id.clone(),
+-                                status: "complete",
+-                                steps: work.used,
+-                                score: Some(score),
+-                                metrics: Some(metrics),
+-                                detail: None,
+-                            },
+-                            Err(e) => Record {
+-                                id: c.id.clone(),
+-                                status: e.status,
+-                                steps: work.used,
+-                                score: None,
+-                                metrics: e.metrics,
+-                                detail: Some(e.detail),
+-                            },
+-                        };
+-                        rows.push((index, record));
+-                    }
+-                    rows
+-                }));
+-            }
+-            jobs.into_iter()
+-                .flat_map(|job| job.join().expect("evaluation worker"))
+-                .collect::<Vec<_>>()
+-        });
+-        records.sort_unstable_by_key(|(index, _)| *index);
+-        let records: Vec<_> = records.into_iter().map(|(_, row)| row).collect();
++        let records: Vec<_> = if budget.workers == 1 || candidates.len() == 1 {
++            candidates
++                .iter()
++                .map(|c| self.record(c, &budget, deadline))
++                .collect()
++        } else {
++            let next = AtomicUsize::new(0);
++            let mut records = std::thread::scope(|scope| {
++                let mut jobs = Vec::new();
++                for _ in 0..budget.workers.min(candidates.len()) {
++                    jobs.push(scope.spawn(|| {
++                        let mut rows = Vec::new();
++                        loop {
++                            let index = next.fetch_add(1, Ordering::Relaxed);
++                            let Some(c) = candidates.get(index) else {
++                                break;
++                            };
++                            let record = self.record(c, &budget, deadline);
++                            rows.push((index, record));
++                        }
++                        rows
++                    }));
++                }
++                jobs.into_iter()
++                    .flat_map(|job| job.join().expect("evaluation worker"))
++                    .collect::<Vec<_>>()
++            });
++            records.sort_unstable_by_key(|(index, _)| *index);
++            records.into_iter().map(|(_, row)| row).collect()
++        };
+         Ok(
+             json!({"schema": concat!(env!("CARGO_PKG_NAME"), ".result/0.1"),
+                   "version": env!("CARGO_PKG_VERSION"),
+-- 
+2.51.1
+

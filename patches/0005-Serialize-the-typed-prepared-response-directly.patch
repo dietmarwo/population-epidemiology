@@ -1,0 +1,90 @@
+From 1fcc0de7ee3fac3148b1e4c7d96094b7e647558e Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Wed, 4 Nov 2026 02:50:29 +0100
+Subject: [PATCH 05/12] Serialize the typed prepared response directly
+
+---
+ src/lib.rs | 31 +++++++++++++++++++++----------
+ 1 file changed, 21 insertions(+), 10 deletions(-)
+
+diff --git a/src/lib.rs b/src/lib.rs
+index 12f342b..386179a 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -114,6 +114,14 @@ struct Record {
+     detail: Option<String>,
+ }
+ 
++#[derive(Serialize)]
++struct Batch<'a> {
++    model_sha256: &'a str,
++    records: Vec<Record>,
++    schema: &'static str,
++    version: &'static str,
++}
++
+ pub struct Prepared {
+     model: domain::Model,
+     model_sha256: String,
+@@ -129,9 +137,10 @@ impl Prepared {
+     }
+ 
+     pub fn evaluate_json(&self, candidates: &str, budget: &str) -> Result<String, String> {
+-        let candidates = serde_json::from_str(candidates).map_err(|e| e.to_string())?;
++        let candidates: Vec<Candidate> =
++            serde_json::from_str(candidates).map_err(|e| e.to_string())?;
+         let budget = serde_json::from_str(budget).map_err(|e| e.to_string())?;
+-        serde_json::to_string(&self.evaluate(candidates, budget)?).map_err(|e| e.to_string())
++        serde_json::to_string(&self.evaluate(&candidates, budget)?).map_err(|e| e.to_string())
+     }
+ 
+     fn record(&self, c: &Candidate, budget: &Budget, deadline: Option<Instant>) -> Record {
+@@ -168,7 +177,7 @@ impl Prepared {
+         }
+     }
+ 
+-    fn evaluate(&self, candidates: Vec<Candidate>, budget: Budget) -> Result<Value, String> {
++    fn evaluate(&self, candidates: &[Candidate], budget: Budget) -> Result<Batch<'_>, String> {
+         if !(1..=64).contains(&budget.workers)
+             || !(1..=100_000_000).contains(&budget.max_steps)
+             || budget.wall_ms.is_some_and(|n| n == 0 || n > 86_400_000)
+@@ -178,7 +187,7 @@ impl Prepared {
+             return Err("invalid budget or batch size".into());
+         }
+         let mut seen = HashSet::with_capacity(candidates.len());
+-        for c in &candidates {
++        for c in candidates {
+             if c.id.is_empty() || c.id.len() > 128 || !seen.insert(&c.id) || c.parameters.len() > 64
+             {
+                 return Err(
+@@ -219,11 +228,12 @@ impl Prepared {
+                 .map(|slot| slot.into_inner().expect("missing evaluation"))
+                 .collect()
+         };
+-        Ok(
+-            json!({"schema": concat!(env!("CARGO_PKG_NAME"), ".result/0.1"),
+-                  "version": env!("CARGO_PKG_VERSION"),
+-                  "model_sha256": self.model_sha256, "records": records}),
+-        )
++        Ok(Batch {
++            model_sha256: &self.model_sha256,
++            records,
++            schema: concat!(env!("CARGO_PKG_NAME"), ".result/0.1"),
++            version: env!("CARGO_PKG_VERSION"),
++        })
+     }
+ }
+ 
+@@ -242,7 +252,8 @@ pub fn run(text: &str) -> Result<Value, String> {
+     if req.schema != concat!(env!("CARGO_PKG_NAME"), ".request/0.1") {
+         return Err("unsupported request schema".into());
+     }
+-    Prepared::new(req.model.get())?.evaluate(req.candidates, req.budget)
++    let prepared = Prepared::new(req.model.get())?;
++    serde_json::to_value(prepared.evaluate(&req.candidates, req.budget)?).map_err(|e| e.to_string())
+ }
+ 
+ pub fn capabilities() -> Value {
+-- 
+2.51.1
+

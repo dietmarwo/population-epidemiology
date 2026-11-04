@@ -1,0 +1,119 @@
+From 6ca965ec6ca41c94b963d63c62678c0343a2039d Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Wed, 4 Nov 2026 02:55:00 +0100
+Subject: [PATCH 11/12] Prepare exact calendar boundaries and charge logical
+ steps
+
+---
+ src/domain.rs | 42 +++++++++++++++++++++++-------------------
+ src/lib.rs    | 14 ++++++++++++++
+ 2 files changed, 37 insertions(+), 19 deletions(-)
+
+diff --git a/src/domain.rs b/src/domain.rs
+index c3b11c8..fb2fcc4 100644
+--- a/src/domain.rs
++++ b/src/domain.rs
+@@ -40,6 +40,7 @@ pub struct Segment {
+ pub struct Model {
+     input: Input,
+     moran: Option<Moran>,
++    calendar: Vec<[f64; 2]>,
+ }
+ struct Moran {
+     states: Vec<(usize, usize)>,
+@@ -50,6 +51,7 @@ struct Moran {
+ 
+ pub fn prepare(input: Input) -> Result<Model, String> {
+     let mut moran = None;
++    let mut calendar = Vec::new();
+     match &input {
+         Input::Sir {
+             susceptible,
+@@ -110,9 +112,25 @@ pub fn prepare(input: Input) -> Result<Model, String> {
+             {
+                 return Err("invalid calendar probability, duration or rates".into());
+             }
++            let mut probability = *initial_on_probability;
++            let mut time = 0.0;
++            calendar.reserve(segments.len());
++            for s in segments {
++                let rate = s.on_rate + s.off_rate;
++                if rate > 0.0 {
++                    let equilibrium = s.on_rate / rate;
++                    probability += (equilibrium - probability) * (-(-rate * s.duration).exp_m1());
++                }
++                time += s.duration;
++                calendar.push([time, probability]);
++            }
+         }
+     }
+-    Ok(Model { input, moran })
++    Ok(Model {
++        input,
++        moran,
++        calendar,
++    })
+ }
+ 
+ pub fn evaluate(model: &Model, c: &Candidate, work: &mut Work<'_>) -> Evaluation {
+@@ -212,28 +230,14 @@ pub fn evaluate(model: &Model, c: &Candidate, work: &mut Work<'_>) -> Evaluation
+                 work,
+             )
+         }
+-        Input::Calendar {
+-            initial_on_probability,
+-            segments,
+-        } => {
++        Input::Calendar { .. } => {
+             if !c.parameters.is_empty() {
+                 return Err(invalid("calendar rates come from the model"));
+             }
+-            let mut probability = *initial_on_probability;
+-            let mut time = 0.0;
+-            let mut boundaries = Vec::new();
+-            for s in segments {
+-                work.step()?;
+-                let rate = s.on_rate + s.off_rate;
+-                if rate > 0.0 {
+-                    let equilibrium = s.on_rate / rate;
+-                    probability += (equilibrium - probability) * (-(-rate * s.duration).exp_m1());
+-                }
+-                time += s.duration;
+-                boundaries.push([time, probability]);
+-            }
++            let boundaries = &model.calendar;
++            work.advance(boundaries.len() as u64)?;
+             Ok((
+-                probability,
++                boundaries.last().expect("nonempty calendar")[1],
+                 work.metrics(|| json!({"boundary_time_and_on_probability":boundaries})),
+             ))
+         }
+diff --git a/src/lib.rs b/src/lib.rs
+index e7dbd04..17bd6a0 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -96,6 +96,20 @@ impl Work<'_> {
+         self.checked_step()
+     }
+ 
++    /// Charge logical steps without bypassing monitoring or changing the count on failure.
++    fn advance(&mut self, count: u64) -> Result<(), Failure> {
++        if self.monitored {
++            return (0..count).try_for_each(|_| self.step());
++        }
++        let available = self.budget.max_steps - self.used;
++        self.used += count.min(available);
++        if count > available {
++            self.checked_step()
++        } else {
++            Ok(())
++        }
++    }
++
+     #[cold]
+     fn checked_step(&mut self) -> Result<(), Failure> {
+         if self.budget.cancel_file.as_ref().is_some_and(|p| p.exists()) {
+-- 
+2.51.1
+
