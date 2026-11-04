@@ -244,3 +244,41 @@ transitions and 65 updates, about 92 us per case.
   single runs of one binary ranged from 2.4 to 4.1 ms. Absolute times on
   this shared 2-vCPU host drift in phases, so only within-pair ratios are
   used.
+
+## Profile after round 8 (round 8 binary, two runs each)
+
+| Workload | ms |
+| --- | ---: |
+| one (full) / lean / matrix | 0.031-0.033 / 0.016-0.019 / 0.016-0.017 |
+| serial (full) | 2.82-3.05 |
+| lean serial / matrix serial | 1.58-1.86 / 1.60-1.61 |
+| trace | 0.63-0.68 |
+| invalid | 1.51-1.54 |
+| domain (Moran, full) | 3.91-3.93 |
+| lean domain / matrix domain | 3.51-4.90 / 3.45-5.02 |
+| domain2 (full) | 0.035-0.042 |
+
+Moran is again the largest workload.
+
+## Round 9: Moran stencil over a padded triangular grid
+
+- Change: a Moran target (a, b) only receives mass from (a-1, b),
+  (a-1, b+1), (a, b-1), itself (up to three self-replacement entries),
+  (a, b+1), (a+1, b-1) and (a+1, b), which is exactly ascending source
+  index order. Store the law on a zero-padded (N+3) x (N+3) grid and nine
+  per-target weight arrays filled from the existing transition list
+  (missing transitions get weight 0), then update each grid row with
+  contiguous loads. Zero-weight slots add +0.0 to a non-negative sum, so
+  every target's additions are unchanged. The final law is read back in
+  triangular state order for marginals, mass and the joint trace.
+  Monitored budgets charge their per-state steps row by row.
+- Workload: lean `domain` (scores on both sides), round 8 against this
+  round.
+- Expected effect: no index loads and vectorizable rows, roughly 1.3x to
+  2x.
+- Decision: the brief's rule. The scatter-reference unit test must still
+  match bit for bit, extended to more populations.
+- Result: 3.673 ms before, 2.346 ms after, 1.57x
+  (`round09-lean-domain.json`). Kept. The scatter-reference test matches
+  bit for bit over 11 population and update settings, and `validate.py`
+  passed.

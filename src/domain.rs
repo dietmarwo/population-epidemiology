@@ -49,12 +49,21 @@ pub struct Model {
 }
 struct Moran {
     states: Vec<(usize, usize)>,
-    /// Incoming transitions of each target state, as (source, probability)
-    /// in ascending source order and then the source's parent/death order.
-    offsets: Vec<usize>,
-    incoming: Vec<(usize, f64)>,
+    /// Row stride of the zero-padded (N+3) x (N+3) law grid. State (a, b)
+    /// lives at `(a + 1) * stride + b + 1`.
+    stride: usize,
+    /// First triangular index of each row a.
+    rows: Vec<usize>,
+    /// Weights by slot and triangular target index. A target (a, b) gets
+    /// mass from (a-1, b), (a-1, b+1), (a, b-1), three self-replacement
+    /// entries, (a, b+1), (a+1, b-1) and (a+1, b), in that order, which is
+    /// ascending source order. Missing transitions have weight 0.
+    weights: [Vec<f64>; MORAN_SLOTS],
     initial: usize,
 }
+
+/// Neighbor and self-replacement slots of the Moran stencil.
+const MORAN_SLOTS: usize = 9;
 
 pub fn prepare(input: Input) -> Result<Model, String> {
     let mut moran = None;
@@ -500,29 +509,38 @@ fn moran_transitions(n: usize) -> (Vec<(usize, usize)>, Vec<Transitions>) {
 }
 
 fn prepare_moran(n: usize, a0: usize, b0: usize) -> Moran {
-    let (states, rows) = moran_transitions(n);
+    let (states, transitions) = moran_transitions(n);
     let index = |a: usize, b: usize| a * (n + 1) - a * a.saturating_sub(1) / 2 + b;
-    // Transpose by target. Visiting sources in ascending order keeps every
-    // target's additions in the order the scatter update performed them.
-    let mut offsets = vec![0; states.len() + 1];
-    for &(to, _) in rows.iter().flatten() {
-        offsets[to + 1] += 1;
-    }
-    for i in 1..offsets.len() {
-        offsets[i] += offsets[i - 1];
-    }
-    let mut fill = offsets.clone();
-    let mut incoming = vec![(0, 0.0); offsets[states.len()]];
-    for (from, row) in rows.iter().enumerate() {
+    // Place every transition in its target's stencil slot. Visiting sources
+    // in ascending order puts self-replacement entries in parent/death order.
+    let mut weights: [Vec<f64>; MORAN_SLOTS] = std::array::from_fn(|_| vec![0.0; states.len()]);
+    let mut selves = vec![0; states.len()];
+    for (from, row) in transitions.iter().enumerate() {
+        let (fa, fb) = states[from];
         for &(to, p) in row {
-            incoming[fill[to]] = (from, p);
-            fill[to] += 1;
+            let (ta, tb) = states[to];
+            let slot = match (fa as isize - ta as isize, fb as isize - tb as isize) {
+                (-1, 0) => 0,
+                (-1, 1) => 1,
+                (0, -1) => 2,
+                (0, 0) => {
+                    selves[to] += 1;
+                    2 + selves[to]
+                }
+                (0, 1) => 6,
+                (1, -1) => 7,
+                (1, 0) => 8,
+                _ => unreachable!("a Moran update moves one individual"),
+            };
+            assert!(weights[slot][to] == 0.0, "one transition per stencil slot");
+            weights[slot][to] = p;
         }
     }
     Moran {
         states,
-        offsets,
-        incoming,
+        stride: n + 3,
+        rows: (0..=n).map(|a| index(a, 0)).collect(),
+        weights,
         initial: index(a0, b0),
     }
 }
@@ -536,10 +554,12 @@ fn moran(
 ) -> Evaluation {
     let Moran {
         states,
-        offsets,
-        incoming,
+        stride,
+        rows,
+        weights,
         initial,
     } = topology;
+    let stride = *stride;
     // Charge the same logical row visits as the cold construction and one
     // row visit per state and update, as in the scatter update. Without a
     // deadline or cancel file, the work limit is the only possible stop, so
@@ -552,23 +572,44 @@ fn moran(
     } else {
         work.advance(states.len() as u64 * (updates as u64 + 1))?;
     }
-    let mut law = vec![0.0; states.len()];
-    let mut next = vec![0.0; states.len()];
-    law[*initial] = 1.0;
+    let cell = |a: usize, b: usize| (a + 1) * stride + b + 1;
+    let mut law = vec![0.0; stride * stride];
+    let mut next = vec![0.0; stride * stride];
+    let (a0, b0) = states[*initial];
+    law[cell(a0, b0)] = 1.0;
     for _ in 0..updates {
-        // A zero-mass source adds +0.0, which leaves the sum unchanged.
-        for (out, offset) in next.iter_mut().zip(offsets.windows(2)) {
+        for (a, &first) in rows.iter().enumerate() {
+            let len = n + 1 - a;
             if monitored {
-                work.step()?;
+                for _ in 0..len {
+                    work.step()?;
+                }
             }
-            let mut sum = 0.0;
-            for &(from, p) in &incoming[offset[0]..offset[1]] {
-                sum += law[from] * p;
+            let o = cell(a, 0);
+            // Neighbor rows around (a, b) for b in 0..len; padding cells are 0.
+            let up = &law[o - stride..o - stride + len + 1];
+            let mid = &law[o - 1..o + len + 1];
+            let down = &law[o + stride - 1..o + stride + len];
+            let w: [&[f64]; MORAN_SLOTS] = std::array::from_fn(|k| &weights[k][first..first + len]);
+            let out = &mut next[o..o + len];
+            for b in 0..len {
+                // The gather started at 0.0; 0.0 + x is x for x >= 0, and a
+                // zero-weight slot adds +0.0 to a non-negative sum.
+                let mut sum = up[b] * w[0][b];
+                sum += up[b + 1] * w[1][b];
+                sum += mid[b] * w[2][b];
+                sum += mid[b + 1] * w[3][b];
+                sum += mid[b + 1] * w[4][b];
+                sum += mid[b + 1] * w[5][b];
+                sum += mid[b + 2] * w[6][b];
+                sum += down[b] * w[7][b];
+                sum += down[b + 1] * w[8][b];
+                out[b] = sum;
             }
-            *out = sum;
         }
         std::mem::swap(&mut law, &mut next);
     }
+    let law: Vec<f64> = states.iter().map(|&(a, b)| law[cell(a, b)]).collect();
     let mut a = vec![0.0; n + 1];
     let mut b = vec![0.0; n + 1];
     for (&(x, y), &mass) in states.iter().zip(&law) {
@@ -670,6 +711,10 @@ mod tests {
             (18, 4, 3, 65),
             (32, 0, 32, 5),
             (32, 10, 11, 300),
+            (5, 5, 0, 30),
+            (6, 0, 0, 12),
+            (11, 3, 8, 77),
+            (24, 1, 1, 150),
         ] {
             let mut work = crate::Work {
                 budget: &budget,
