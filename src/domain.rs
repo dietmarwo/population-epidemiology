@@ -1,6 +1,6 @@
 use crate::sir_fsp::{self, Detail, Projection, Solution};
 use crate::{Evaluation, Work, infeasible, invalid};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json, value::RawValue};
 
 pub const CAPABILITIES: &[&str] = &[
@@ -186,6 +186,107 @@ pub(crate) fn sir_documents(
     (bytes, run.to_string())
 }
 
+/// SIR metrics with fields in the sorted key order of a `Value` map.
+#[derive(Serialize)]
+struct SirMetrics<'a> {
+    crn_model_sha256: Option<&'a str>,
+    crn_run_sha256: Option<&'a str>,
+    error: Vec<ErrorMetrics>,
+    fsp: Option<SortedFsp<'a>>,
+    fsp_work: u64,
+    holdout_mse: Option<f64>,
+    infected_means: &'a [f64],
+    numerical_error_certified: bool,
+}
+
+#[derive(Serialize)]
+struct ErrorMetrics {
+    mass_defect: f64,
+    physical_leakage: f64,
+    roundoff_mass_residual: f64,
+    series_tail_upper_bound: f64,
+}
+
+/// `crn_craft::fsp::FspResult` with fields in sorted key order.
+#[derive(Serialize)]
+struct SortedFsp<'a> {
+    model_sha256: &'a str,
+    numerical_error_certified: bool,
+    run_sha256: &'a str,
+    schema: &'a crn_craft::fsp::FspVersion,
+    snapshots: Vec<SortedSnapshot<'a>>,
+    sparse_edges: usize,
+    species: &'a [String],
+    states: &'a [Vec<i64>],
+    uniformization_rate: f64,
+    work: u64,
+}
+
+/// `crn_craft::fsp::FspSnapshot` with fields in sorted key order.
+#[derive(Serialize)]
+struct SortedSnapshot<'a> {
+    discarded_weight_estimate: f64,
+    mass_defect: f64,
+    physical_leakage_estimate: f64,
+    probabilities: &'a [f64],
+    projected_first_moment: &'a [f64],
+    projected_second_raw_moment: &'a [f64],
+    roundoff_mass_residual: f64,
+    series_tail_upper_bound: f64,
+    time: f64,
+}
+
+/// Serialize SIR metrics to the same bytes as the equivalent `json!` value.
+fn sir_metrics(solved: &Solved, holdout: Option<f64>) -> Box<RawValue> {
+    let fsp = solved.trace.as_ref().map(|t| SortedFsp {
+        model_sha256: &t.model_sha256,
+        numerical_error_certified: t.numerical_error_certified,
+        run_sha256: &t.run_sha256,
+        schema: &t.schema,
+        snapshots: t
+            .snapshots
+            .iter()
+            .map(|s| SortedSnapshot {
+                discarded_weight_estimate: s.discarded_weight_estimate,
+                mass_defect: s.mass_defect,
+                physical_leakage_estimate: s.physical_leakage_estimate,
+                probabilities: &s.probabilities,
+                projected_first_moment: &s.projected_first_moment,
+                projected_second_raw_moment: &s.projected_second_raw_moment,
+                roundoff_mass_residual: s.roundoff_mass_residual,
+                series_tail_upper_bound: s.series_tail_upper_bound,
+                time: s.time,
+            })
+            .collect(),
+        sparse_edges: t.sparse_edges,
+        species: &t.species,
+        states: &t.states,
+        uniformization_rate: t.uniformization_rate,
+        work: t.work,
+    });
+    let metrics = SirMetrics {
+        crn_model_sha256: solved.model_sha256.as_deref(),
+        crn_run_sha256: solved.run_sha256.as_deref(),
+        error: solved
+            .solution
+            .errors
+            .iter()
+            .map(|e| ErrorMetrics {
+                physical_leakage: e[0],
+                series_tail_upper_bound: e[1],
+                mass_defect: e[2],
+                roundoff_mass_residual: e[3],
+            })
+            .collect(),
+        fsp,
+        fsp_work: solved.solution.work,
+        holdout_mse: holdout,
+        infected_means: &solved.solution.means,
+        numerical_error_certified: solved.certified,
+    };
+    serde_json::value::to_raw_value(&metrics).expect("finite SIR metrics")
+}
+
 /// Means, diagnostics, work and provenance of one solved SIR binding.
 struct Solved {
     solution: Solution,
@@ -325,24 +426,7 @@ pub fn evaluate(model: &Model, parameters: &[f64], trace: bool, work: &mut Work<
             }
             let train = loss[0] / f64::from(count[0]);
             let holdout = (count[1] > 0).then(|| loss[1] / f64::from(count[1]));
-            Ok((
-                train,
-                work.metrics(|| {
-                    let errors: Vec<_> = solved
-                        .solution
-                        .errors
-                        .iter()
-                        .map(|e| {
-                            json!({"physical_leakage":e[0],"series_tail_upper_bound":e[1],
-                                   "mass_defect":e[2],"roundoff_mass_residual":e[3]})
-                        })
-                        .collect();
-                    json!({"infected_means":solved.solution.means,"holdout_mse":holdout,"error":errors,
-                    "fsp_work":solved.solution.work,"numerical_error_certified":solved.certified,
-                    "crn_model_sha256":solved.model_sha256,"crn_run_sha256":solved.run_sha256,
-                    "fsp":solved.trace})
-                }),
-            ))
+            Ok((train, work.raw_metrics(|| sir_metrics(&solved, holdout))))
         }
         Input::Moran {
             population,
@@ -504,6 +588,54 @@ fn moran(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The `json!` construction used through round 6.
+    fn sir_metrics_value(solved: &Solved, holdout: Option<f64>) -> Value {
+        let errors: Vec<_> = solved
+            .solution
+            .errors
+            .iter()
+            .map(|e| {
+                json!({"physical_leakage":e[0],"series_tail_upper_bound":e[1],
+                       "mass_defect":e[2],"roundoff_mass_residual":e[3]})
+            })
+            .collect();
+        json!({"infected_means":solved.solution.means,"holdout_mse":holdout,"error":errors,
+        "fsp_work":solved.solution.work,"numerical_error_certified":solved.certified,
+        "crn_model_sha256":solved.model_sha256,"crn_run_sha256":solved.run_sha256,
+        "fsp":solved.trace})
+    }
+
+    #[test]
+    fn typed_sir_metrics_serialize_like_the_json_value() {
+        let initial = [9, 2, 1];
+        let times = [0.0, 1.0, 2.0, 3.0, 5.0];
+        let projection = Projection::new(initial, &times, 1e-11);
+        for (beta, gamma) in [(0.7, 0.4), (5.0, 0.01), (0.001, 4.0)] {
+            let infection = beta / 12.0;
+            let (model, run) = sir_documents(initial, &times, 1e-11, infection, gamma, None);
+            let control = crn_craft::simulation::Control::default();
+            let out = crn_craft::fsp::solve(model.as_bytes(), run.as_bytes(), &control).unwrap();
+            for traced in [false, true] {
+                let solution = projection
+                    .solve(infection, gamma, Detail::Diagnostics)
+                    .unwrap();
+                let solved = Solved {
+                    solution,
+                    model_sha256: Some(out.model_sha256.clone()),
+                    run_sha256: (!traced).then(|| out.run_sha256.clone()),
+                    certified: traced,
+                    trace: traced.then(|| out.clone()),
+                };
+                for holdout in [None, Some(0.125), Some(1e-300)] {
+                    assert_eq!(
+                        sir_metrics(&solved, holdout).get(),
+                        sir_metrics_value(&solved, holdout).to_string()
+                    );
+                }
+            }
+        }
+    }
 
     /// The scatter update used through 0.2.0.
     fn scatter(n: usize, a0: usize, b0: usize, updates: usize) -> Vec<f64> {

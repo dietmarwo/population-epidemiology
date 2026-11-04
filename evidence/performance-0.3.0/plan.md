@@ -200,3 +200,21 @@ transitions and 65 updates, about 92 us per case.
   Kept. `validate.py` (which compares traced FSP probabilities with a
   dense matrix exponential) passed, and the traced CLI request printed
   the same bytes as the 0.2.0 CLI.
+
+## Round 7: serialize SIR metrics from typed structs
+
+- Change: build SIR metrics from `#[derive(Serialize)]` structs whose
+  fields are declared in the sorted key order a `serde_json::Value` map
+  produces, including sorted mirrors that borrow the traced `FspResult`
+  and its snapshots. They serialize straight to the raw metrics JSON, so
+  no `Value` tree is built, and the trace is no longer converted with
+  `to_value` first.
+- Workload: `trace` (12 traced SIR candidates, full records), round 6
+  against this round.
+- Expected effect: removes the `Value` construction for the 75-state
+  trace and the per-record metrics maps, roughly 1.2x to 1.4x.
+- Decision: the brief's rule. Output bytes must be identical; a unit test
+  compares the typed serialization with the `json!` construction byte for
+  byte, traced and untraced, with and without holdout points.
+- Result: 1.090 ms before, 0.817 ms after, 1.33x (`round07-trace.json`).
+  Kept. The traced CLI request still prints the 0.2.0 bytes.
