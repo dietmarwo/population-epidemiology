@@ -47,8 +47,10 @@ pub struct Model {
 }
 struct Moran {
     states: Vec<(usize, usize)>,
+    /// Incoming transitions of each target state, as (source, probability)
+    /// in ascending source order and then the source's parent/death order.
     offsets: Vec<usize>,
-    transitions: Vec<(usize, f64)>,
+    incoming: Vec<(usize, f64)>,
     initial: usize,
 }
 
@@ -346,37 +348,66 @@ pub fn evaluate(model: &Model, parameters: &[f64], trace: bool, work: &mut Work<
     }
 }
 
-fn prepare_moran(n: usize, a0: usize, b0: usize) -> Moran {
+/// Outgoing (target, probability) transitions of one Moran state.
+type Transitions = Vec<(usize, f64)>;
+
+/// Triangular (a, b) states and their outgoing transitions in parent/death
+/// order, with self replacement repeated.
+fn moran_transitions(n: usize) -> (Vec<(usize, usize)>, Vec<Transitions>) {
     let states: Vec<_> = (0..=n)
         .flat_map(|a| (0..=n - a).map(move |b| (a, b)))
         .collect();
     let index = |a: usize, b: usize| a * (n + 1) - a * a.saturating_sub(1) / 2 + b;
     let denom = (n * n) as f64;
-    let mut offsets = Vec::with_capacity(states.len() + 1);
-    let mut transitions = Vec::with_capacity(states.len() * 9);
-    for &(a, b) in &states {
-        let counts = [n - a - b, a, b];
-        offsets.push(transitions.len());
-        for parent in 0..3 {
-            for death in 0..3 {
-                if counts[parent] == 0 || counts[death] == 0 {
-                    continue;
+    let rows = states
+        .iter()
+        .map(|&(a, b)| {
+            let counts = [n - a - b, a, b];
+            let mut row = Vec::with_capacity(9);
+            for parent in 0..3 {
+                for death in 0..3 {
+                    if counts[parent] == 0 || counts[death] == 0 {
+                        continue;
+                    }
+                    let mut next = counts;
+                    next[parent] += 1;
+                    next[death] -= 1;
+                    row.push((
+                        index(next[1], next[2]),
+                        (counts[parent] * counts[death]) as f64 / denom,
+                    ));
                 }
-                let mut next = counts;
-                next[parent] += 1;
-                next[death] -= 1;
-                transitions.push((
-                    index(next[1], next[2]),
-                    (counts[parent] * counts[death]) as f64 / denom,
-                ));
             }
+            row
+        })
+        .collect();
+    (states, rows)
+}
+
+fn prepare_moran(n: usize, a0: usize, b0: usize) -> Moran {
+    let (states, rows) = moran_transitions(n);
+    let index = |a: usize, b: usize| a * (n + 1) - a * a.saturating_sub(1) / 2 + b;
+    // Transpose by target. Visiting sources in ascending order keeps every
+    // target's additions in the order the scatter update performed them.
+    let mut offsets = vec![0; states.len() + 1];
+    for &(to, _) in rows.iter().flatten() {
+        offsets[to + 1] += 1;
+    }
+    for i in 1..offsets.len() {
+        offsets[i] += offsets[i - 1];
+    }
+    let mut fill = offsets.clone();
+    let mut incoming = vec![(0, 0.0); offsets[states.len()]];
+    for (from, row) in rows.iter().enumerate() {
+        for &(to, p) in row {
+            incoming[fill[to]] = (from, p);
+            fill[to] += 1;
         }
     }
-    offsets.push(transitions.len());
     Moran {
         states,
         offsets,
-        transitions,
+        incoming,
         initial: index(a0, b0),
     }
 }
@@ -391,7 +422,7 @@ fn moran(
     let Moran {
         states,
         offsets,
-        transitions,
+        incoming,
         initial,
     } = topology;
     // Charge the same logical row visits as the cold construction.
@@ -402,15 +433,15 @@ fn moran(
     let mut next = vec![0.0; states.len()];
     law[*initial] = 1.0;
     for _ in 0..updates {
-        next.fill(0.0);
-        for (&mass, offset) in law.iter().zip(offsets.windows(2)) {
+        // One logical row visit per state, as in the scatter update. A
+        // zero-mass source adds +0.0, which leaves the sum unchanged.
+        for (out, offset) in next.iter_mut().zip(offsets.windows(2)) {
             work.step()?;
-            if mass == 0.0 {
-                continue;
+            let mut sum = 0.0;
+            for &(from, p) in &incoming[offset[0]..offset[1]] {
+                sum += law[from] * p;
             }
-            for &(to, p) in &transitions[offset[0]..offset[1]] {
-                next[to] += mass * p;
-            }
+            *out = sum;
         }
         std::mem::swap(&mut law, &mut next);
     }
@@ -428,4 +459,62 @@ fn moran(
             || json!({"marginal_a":a,"marginal_b":b,"mass":mass,"joint":joint,"updates":updates}),
         ),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The scatter update used through 0.2.0.
+    fn scatter(n: usize, a0: usize, b0: usize, updates: usize) -> Vec<f64> {
+        let (states, rows) = moran_transitions(n);
+        let index = |a: usize, b: usize| a * (n + 1) - a * a.saturating_sub(1) / 2 + b;
+        let mut law = vec![0.0; states.len()];
+        let mut next = vec![0.0; states.len()];
+        law[index(a0, b0)] = 1.0;
+        for _ in 0..updates {
+            next.fill(0.0);
+            for (&mass, row) in law.iter().zip(&rows) {
+                if mass == 0.0 {
+                    continue;
+                }
+                for &(to, p) in row {
+                    next[to] += mass * p;
+                }
+            }
+            std::mem::swap(&mut law, &mut next);
+        }
+        law
+    }
+
+    #[test]
+    fn gathered_moran_update_matches_the_scatter_update_bit_for_bit() {
+        let budget = crate::Budget::default();
+        for (n, a0, b0, updates) in [
+            (2, 1, 1, 0),
+            (2, 0, 0, 3),
+            (3, 1, 1, 3),
+            (7, 2, 4, 40),
+            (18, 4, 3, 65),
+            (32, 0, 32, 5),
+            (32, 10, 11, 300),
+        ] {
+            let mut work = crate::Work {
+                budget: &budget,
+                deadline: None,
+                used: 0,
+                monitored: false,
+                metrics_enabled: true,
+            };
+            let (_, metrics) =
+                moran(&prepare_moran(n, a0, b0), n, updates, true, &mut work).unwrap();
+            let law: Vec<f64> =
+                serde_json::from_value(metrics["joint"]["probabilities"].clone()).unwrap();
+            let reference = scatter(n, a0, b0, updates);
+            let bits = |v: &[f64]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+            assert_eq!(bits(&law), bits(&reference), "{n} {a0} {b0} {updates}");
+            let states = (n + 1) * (n + 2) / 2;
+            assert_eq!(work.used, (states * (updates + 1)) as u64);
+        }
+    }
 }

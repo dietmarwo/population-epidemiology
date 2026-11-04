@@ -83,3 +83,39 @@ The JSON API boundary is about 1 us per candidate.
   (`round02-matrix-serial.json`). Kept. `validation/validate.py` passed
   against the round 2 CLI and reproduced `models/example.json` and
   `evidence/validation.json` exactly.
+
+## Profile after round 2 (round 2 binary, one run each)
+
+| Workload | ms |
+| --- | ---: |
+| one (full) | 0.041 |
+| serial (full) | 3.869 |
+| lean serial / matrix serial | 2.199 / 2.149 |
+| parallel (4 workers on 2 vCPUs) | 2.762 |
+| trace (12 traced, vendored solver) | 2.179 |
+| invalid | 1.277 |
+| domain (Moran, full) | 4.427 |
+| lean domain / matrix domain | 4.570 / 4.344 |
+| domain2 (calendar, full) | 2.597 |
+
+Moran (`domain`) is now the largest workload: 190 states, about 1,500
+transitions and 65 updates, about 92 us per case.
+
+## Round 3: gather the Moran update by target state
+
+- Change: store Moran transitions by target state (incoming entries in
+  ascending source order, then the source's parent/death order) and
+  compute each next probability as one sum, instead of zeroing the next
+  law and scattering every source's contributions. The sequence of
+  floating-point additions per target is unchanged; zero-mass sources add
+  +0.0, which leaves a non-negative sum unchanged. One logical step per
+  state row per update is still charged, interleaved with the rows.
+- Workload: `domain` (48 Moran cases, full records), round 2 against
+  this round.
+- Expected effect: 1.2x to 1.5x from removing the fill and the
+  read-modify-write scatter.
+- Decision: the brief's rule. Results should be bit-identical; a unit
+  test compares the gather kernel with the scatter kernel bit for bit.
+- Result: 4.432 ms before, 3.394 ms after, 1.31x (`round03-domain.json`).
+  Kept. The unit test confirms bit-identical laws; `validate.py` also
+  passed.
