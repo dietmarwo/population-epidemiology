@@ -36,9 +36,30 @@ pub struct Projection {
     /// no incoming edges here.
     sources: Vec<[usize; 3]>,
     kinds: Vec<[Entry; 3]>,
+    /// The same generator as a stencil on the (S, I) grid, when every
+    /// column's ascending source order fits it.
+    grid: Option<Grid>,
     edges: usize,
     times: Vec<f64>,
     tolerance: f64,
+}
+
+/// Zero-padded (S, I) grid storage for the series vectors. Every transition
+/// lowers 2S + I by one, so discovery numbers states level by level and, as
+/// checked at construction, each column (S, I) adds the recovery source
+/// (S, I+1), the infection source (S+1, I-1) and its diagonal in that order.
+struct Grid {
+    stride: usize,
+    /// Storage index of each state in discovery order.
+    cells: Vec<usize>,
+    /// Storage index of the escaping sink, the last element.
+    sink: usize,
+    /// Rows of reachable states: first storage index, length and first
+    /// position in row-major state order.
+    rows: Vec<(usize, usize, usize)>,
+    /// In row-major order: the discovery index of each cell's state and of
+    /// its recovery and infection sources, if those transitions exist.
+    region: Vec<[Option<usize>; 3]>,
 }
 
 #[derive(Clone, Copy)]
@@ -151,6 +172,7 @@ impl Projection {
             sources.push(slot_sources);
             kinds.push(slot_kinds);
         }
+        let grid = Grid::new(&states, &sources, &kinds);
         Self {
             susceptible: states.iter().map(|x| x[0] as f64).collect(),
             infected: states.iter().map(|x| x[1] as f64).collect(),
@@ -158,6 +180,7 @@ impl Projection {
             recovery,
             sources,
             kinds,
+            grid,
             edges: entries.len() - n,
             times: times.to_vec(),
             tolerance,
@@ -185,6 +208,19 @@ impl Projection {
     #[cfg(test)]
     pub fn states(&self) -> usize {
         self.infected.len()
+    }
+
+    /// Whether the grid stencil replaces the slot kernel.
+    #[cfg(test)]
+    pub fn uses_grid(&self) -> bool {
+        self.grid.is_some()
+    }
+
+    /// The same projection with the slot kernel.
+    #[cfg(test)]
+    fn without_grid(mut self) -> Self {
+        self.grid = None;
+        self
     }
 
     /// Conservative compact-JSON size of the solver's full result, used to
@@ -271,26 +307,49 @@ impl Projection {
                 }
             }
         }
-        let weights: Vec<[f64; 3]> = self
-            .kinds
-            .iter()
-            .zip(&self.sources)
-            .map(|(kinds, sources)| {
-                [0, 1, 2].map(|k| match kinds[k] {
-                    Entry::Diagonal => diagonal[sources[k]],
-                    Entry::Infection => infection_rate[sources[k]],
-                    Entry::Recovery => recovery_rate[sources[k]],
-                    Entry::Padding => 0.0,
-                })
-            })
-            .collect();
+        let kernel = match &self.grid {
+            Some(grid) => {
+                let weight = |state: Option<usize>, rates: &[f64]| state.map_or(0.0, |i| rates[i]);
+                let mut stencil = [Vec::new(), Vec::new(), Vec::new()];
+                for &[state, recovery, infection] in &grid.region {
+                    stencil[0].push(weight(recovery, &recovery_rate));
+                    stencil[1].push(weight(infection, &infection_rate));
+                    stencil[2].push(weight(state, &diagonal));
+                }
+                Kernel::Grid(grid, stencil)
+            }
+            None => Kernel::Slots(
+                self.kinds
+                    .iter()
+                    .zip(&self.sources)
+                    .map(|(kinds, sources)| {
+                        [0, 1, 2].map(|k| match kinds[k] {
+                            Entry::Diagonal => diagonal[sources[k]],
+                            Entry::Infection => infection_rate[sources[k]],
+                            Entry::Recovery => recovery_rate[sources[k]],
+                            Entry::Padding => 0.0,
+                        })
+                    })
+                    .collect(),
+            ),
+        };
+        let identity: Vec<usize>;
+        let (cells, sink, storage) = match &self.grid {
+            Some(grid) => (grid.cells.as_slice(), grid.sink, grid.sink + 1),
+            None => {
+                identity = (0..n).collect();
+                (identity.as_slice(), n, n + 1)
+            }
+        };
+        // Sums over the solver's vector: states in discovery order, then the sink.
+        let total = |v: &[f64]| -> f64 { cells.iter().map(|&c| v[c]).chain([v[sink]]).sum() };
         // Discovery visits every state and every reaction once.
         let mut work = (n * (1 + REACTIONS)) as u64;
-        let mut term = vec![0.0; n + 1];
-        let mut next = vec![0.0; n + 1];
-        let mut result = vec![0.0; n + 1];
-        let mut p = vec![0.0; n + 1];
-        p[0] = 1.0;
+        let mut term = vec![0.0; storage];
+        let mut next = vec![0.0; storage];
+        let mut result = vec![0.0; storage];
+        let mut p = vec![0.0; storage];
+        p[cells[0]] = 1.0;
         let mut means = Vec::with_capacity(self.times.len());
         let mut errors = Vec::with_capacity(if diagnostics { self.times.len() } else { 0 });
         let mut snapshots = Vec::with_capacity(if traced { self.times.len() } else { 0 });
@@ -318,18 +377,28 @@ impl Projection {
                         let ratio = mu / (k + 2) as f64;
                         if ratio < 1.0 && next_weight / (1.0 - ratio) <= tail_per_step {
                             tail_bound += next_weight / (1.0 - ratio);
-                            discarded +=
-                                omitted_weight(next_weight, mu, k + 1) * p.iter().sum::<f64>();
+                            discarded += omitted_weight(next_weight, mu, k + 1) * total(&p);
                             break;
                         }
-                        multiply_accumulate(
-                            &self.sources,
-                            &weights,
-                            &term,
-                            &mut next,
-                            &mut result,
-                            next_weight,
-                        );
+                        match &kernel {
+                            Kernel::Slots(weights) => multiply_accumulate(
+                                &self.sources,
+                                weights,
+                                &term,
+                                &mut next,
+                                &mut result,
+                                next_weight,
+                            ),
+                            Kernel::Grid(grid, stencil) => {
+                                grid.multiply_accumulate(
+                                    stencil,
+                                    &term,
+                                    &mut next,
+                                    &mut result,
+                                    next_weight,
+                                );
+                            }
+                        }
                         std::mem::swap(&mut term, &mut next);
                         weight = next_weight;
                         k += 1;
@@ -342,23 +411,33 @@ impl Projection {
             if work > MAX_WORK {
                 return None;
             }
-            let mass: f64 = p.iter().sum();
-            if p.iter().any(|x| !x.is_finite() || *x < 0.0) {
+            let mass = total(&p);
+            if cells
+                .iter()
+                .chain([&sink])
+                .any(|&c| !p[c].is_finite() || p[c] < 0.0)
+            {
                 return None;
             }
-            means.push(self.infected.iter().zip(&p).map(|(x, q)| x * q).sum());
+            means.push(
+                self.infected
+                    .iter()
+                    .zip(cells)
+                    .map(|(x, &c)| x * p[c])
+                    .sum(),
+            );
             if traced {
                 // The vendored solver's snapshot, field by field.
                 snapshots.push(FspSnapshot {
                     time,
-                    probabilities: p[..n].to_vec(),
-                    physical_leakage_estimate: p[n],
+                    probabilities: cells.iter().map(|&c| p[c]).collect(),
+                    physical_leakage_estimate: p[sink],
                     projected_first_moment: (0..SPECIES)
                         .map(|j| {
                             self.counts
                                 .iter()
-                                .zip(&p)
-                                .map(|(x, q)| x[j] as f64 * q)
+                                .zip(cells)
+                                .map(|(x, &c)| x[j] as f64 * p[c])
                                 .sum()
                         })
                         .collect(),
@@ -366,8 +445,8 @@ impl Projection {
                         .map(|j| {
                             self.counts
                                 .iter()
-                                .zip(&p)
-                                .map(|(x, q)| (x[j] as f64).powi(2) * q)
+                                .zip(cells)
+                                .map(|(x, &c)| (x[j] as f64).powi(2) * p[c])
                                 .sum()
                         })
                         .collect(),
@@ -378,7 +457,12 @@ impl Projection {
                 });
             }
             if diagnostics {
-                errors.push([p[n], tail_bound, 1.0 - mass, (1.0 - mass - discarded).abs()]);
+                errors.push([
+                    p[sink],
+                    tail_bound,
+                    1.0 - mass,
+                    (1.0 - mass - discarded).abs(),
+                ]);
             }
             previous = time;
         }
@@ -394,6 +478,116 @@ impl Projection {
             work,
             trace,
         })
+    }
+}
+
+/// Per-binding weights of the selected product kernel.
+enum Kernel<'a> {
+    Slots(Vec<[f64; 3]>),
+    /// Recovery, infection and diagonal weights in row-major cell order.
+    Grid(&'a Grid, [Vec<f64>; 3]),
+}
+
+impl Grid {
+    /// Build the grid if every S row of states is a contiguous I range and
+    /// every column's ascending source order is recovery, infection, diagonal.
+    fn new(
+        states: &[[i64; SPECIES]],
+        sources: &[[usize; 3]],
+        kinds: &[[Entry; 3]],
+    ) -> Option<Self> {
+        let s_low = states.iter().map(|x| x[0]).min()?;
+        let s_high = states.iter().map(|x| x[0]).max()?;
+        let i_high = states.iter().map(|x| x[1]).max()?;
+        let stride = usize::try_from(i_high).ok()? + 3;
+        let height = usize::try_from(s_high - s_low).ok()? + 2;
+        let cell = |x: &[i64; SPECIES]| (x[0] - s_low) as usize * stride + x[1] as usize + 1;
+        let mut by_row: Vec<Vec<usize>> = vec![Vec::new(); height];
+        for (i, x) in states.iter().enumerate() {
+            by_row[(x[0] - s_low) as usize].push(i);
+        }
+        let mut rows = Vec::new();
+        let mut region = Vec::with_capacity(states.len());
+        for members in &mut by_row {
+            members.sort_by_key(|&i| states[i][1]);
+            let Some(&first) = members.first() else {
+                continue;
+            };
+            let contiguous = members
+                .iter()
+                .enumerate()
+                .all(|(k, &i)| states[i][1] == states[first][1] + k as i64);
+            if !contiguous {
+                return None;
+            }
+            rows.push((cell(&states[first]), members.len(), region.len()));
+            for &i in members.iter() {
+                let mut order = Vec::new();
+                let mut slots = [Some(i), None, None];
+                for (&source, &kind) in sources[i].iter().zip(&kinds[i]) {
+                    let (position, expected) = match kind {
+                        Entry::Recovery => (0, [states[i][0], states[i][1] + 1]),
+                        Entry::Infection => (1, [states[i][0] + 1, states[i][1] - 1]),
+                        Entry::Diagonal => (2, [states[i][0], states[i][1]]),
+                        Entry::Padding => continue,
+                    };
+                    if states[source][..2] != expected {
+                        return None;
+                    }
+                    if position < 2 {
+                        slots[position + 1] = Some(source);
+                    }
+                    order.push(position);
+                }
+                if !order.windows(2).all(|w| w[0] < w[1]) || order.last() != Some(&2) {
+                    return None;
+                }
+                region.push(slots);
+            }
+        }
+        Some(Self {
+            stride,
+            cells: states.iter().map(cell).collect(),
+            sink: height * stride,
+            rows,
+            region,
+        })
+    }
+
+    /// `next = term · P` and `result += weight * next` on the grid, with the
+    /// sink keeping its mass. Each cell adds its recovery source, infection
+    /// source and diagonal in the vendored solver's order; a missing
+    /// transition has weight 0 and adds +0.0 to a non-negative sum.
+    fn multiply_accumulate(
+        &self,
+        [recovery, infection, diagonal]: &[Vec<f64>; 3],
+        term: &[f64],
+        next: &mut [f64],
+        result: &mut [f64],
+        weight: f64,
+    ) {
+        let w = self.stride;
+        for &(o, len, k) in &self.rows {
+            let right = &term[o + 1..o + 1 + len];
+            let lower = &term[o + w - 1..o + w - 1 + len];
+            let here = &term[o..o + len];
+            let (wr, wi, wd) = (
+                &recovery[k..k + len],
+                &infection[k..k + len],
+                &diagonal[k..k + len],
+            );
+            let out = &mut next[o..o + len];
+            let total = &mut result[o..o + len];
+            for i in 0..len {
+                let mut sum = right[i] * wr[i];
+                sum += lower[i] * wi[i];
+                sum += here[i] * wd[i];
+                out[i] = sum;
+                total[i] += weight * sum;
+            }
+        }
+        next[self.sink] = term[self.sink];
+        result[self.sink] += weight * term[self.sink];
     }
 }
 
@@ -445,14 +639,32 @@ mod tests {
     use super::*;
     use crate::domain::sir_documents;
 
-    /// Compare one binding with the vendored solver bit for bit.
+    /// Compare one binding with the vendored solver bit for bit, with the
+    /// grid stencil and with the slot kernel.
     fn compare(initial: [u32; 3], times: &[f64], tolerance: f64, beta: f64, gamma: f64) {
+        compare_kernel(initial, times, tolerance, beta, gamma, true);
+        compare_kernel(initial, times, tolerance, beta, gamma, false);
+    }
+
+    fn compare_kernel(
+        initial: [u32; 3],
+        times: &[f64],
+        tolerance: f64,
+        beta: f64,
+        gamma: f64,
+        grid: bool,
+    ) {
         let n = initial.iter().sum::<u32>();
         let infection = beta / f64::from(n);
         let (model, run) = sir_documents(initial, times, tolerance, infection, gamma, None);
         let control = crn_craft::simulation::Control::default();
         let reference = crn_craft::fsp::solve(model.as_bytes(), run.as_bytes(), &control);
         let projection = Projection::new(initial, times, tolerance);
+        let projection = if grid {
+            projection
+        } else {
+            projection.without_grid()
+        };
         let fast = projection.solve(infection, gamma, Detail::Diagnostics);
         let label = format!("{initial:?} {times:?} {tolerance} {beta} {gamma}");
         let Ok(out) = reference else {
@@ -547,6 +759,16 @@ mod tests {
         // The largest supported population, including long multi-step intervals.
         compare([28, 2, 0], &[0.0, 30.0, 120.0], 1e-13, 5.0, 5.0);
         compare([20, 10, 0], &[0.0, 0.5, 1.0, 1.5, 2.0], 1e-12, 2.5, 0.3);
+        for initial in [
+            [9, 2, 1],
+            [1, 1, 0],
+            [0, 3, 2],
+            [14, 1, 0],
+            [28, 2, 0],
+            [20, 10, 0],
+        ] {
+            assert!(Projection::new(initial, &[0.0, 1.0], 1e-11).uses_grid());
+        }
     }
 
     #[test]

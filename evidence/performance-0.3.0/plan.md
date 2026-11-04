@@ -282,3 +282,27 @@ Moran is again the largest workload.
   (`round09-lean-domain.json`). Kept. The scatter-reference test matches
   bit for bit over 11 population and update settings, and `validate.py`
   passed.
+
+## Round 10: SIR uniformization as a stencil on the (S, I) grid
+
+- Change: every transition lowers 2S + I by one, so breadth-first
+  discovery numbers states level by level, and within a level in
+  ascending S. Each generator column (S, I) therefore adds, in ascending
+  source order, the recovery source (S, I+1), the infection source
+  (S+1, I-1) and its diagonal. Preparation checks that pattern for every
+  column and that each S row of reachable states is a contiguous I range.
+  If both hold, the series vectors live on a zero-padded (S, I) grid and
+  each product row uses three contiguous streams and no index arrays.
+  Snapshot sums, moments, the discarded-weight sum and the trace gather in
+  discovery order, sink last, exactly as before. Otherwise the 3-slot
+  kernel from round 8 stays in use.
+- Workload: `serial` through the matrix API, round 9 against this round.
+- Expected effect: 1.2x to 1.4x on the uniformization product.
+- Decision: the brief's rule. The bit-for-bit projection tests against
+  the vendored solver must keep passing, and a test checks that the
+  stencil is selected for the test grid.
+- Result: 1.841 ms before, 1.597 ms after, 1.15x
+  (`round10-matrix-serial.json`). Kept. Both kernels match the vendored
+  solver bit for bit in the projection tests, the stencil is selected
+  for every tested population, `validate.py` passed, and the traced CLI
+  request still prints the 0.2.0 bytes.
