@@ -1,0 +1,7 @@
+{
+  "replicates": 4096,
+  "seed": 4242,
+  "alpha": 0.001,
+  "bound": 0.4023686299292526,
+  "max_mean_difference": 0.03580085877210992
+}

@@ -1,0 +1,31 @@
+
+early (0-2): times [0.0, 0.5, 1.0, 1.5, 2.0, 2.5]
+  loss at truth 0.00e+00; peak expected infected 4.23
+  beta +10%                train MSE 3.338e-02
+  gamma +10%               train MSE 8.015e-03
+  both +10% (same R0)      train MSE 7.619e-03
+  beta +10%, gamma -10%    train MSE 7.969e-02
+  d mean / d beta : [0.0, 0.996, 2.131, 3.226, 4.12, 4.716]
+  d mean / d gamma: [0.0, -1.251, -2.997, -5.146, -7.523, -9.925]
+
+spread (0-10): times [0.0, 2.0, 4.0, 6.0, 8.0, 10.0]
+  loss at truth 0.00e+00; peak expected infected 4.50
+  beta +10%                train MSE 8.943e-02
+  gamma +10%               train MSE 1.284e-01
+  both +10% (same R0)      train MSE 2.924e-02
+  beta +10%, gamma -10%    train MSE 4.869e-01
+  d mean / d beta : [0.0, 4.12, 4.746, 2.822, 1.09, 0.141]
+  d mean / d gamma: [0.0, -7.523, -15.703, -18.319, -16.786, -13.627]
+
+late sparse: times [0.0, 6.0, 9.0, 12.0, 15.0, 18.0]
+  loss at truth 0.00e+00; peak expected infected 3.81
+  beta +10%                train MSE 1.286e-02
+  gamma +10%               train MSE 1.288e-01
+  both +10% (same R0)      train MSE 8.243e-02
+  beta +10%, gamma -10%    train MSE 2.611e-01
+  d mean / d beta : [0.0, 2.822, 0.526, -0.244, -0.328, -0.236]
+  d mean / d gamma: [0.0, -18.319, -15.293, -10.304, -6.233, -3.523]
+
+tolerance 1e-05: largest series tail bound 8.62e-06, FSP work 73410
+
+tolerance 1e-13: largest series tail bound 5.27e-14, FSP work 105730

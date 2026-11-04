@@ -1,0 +1,28 @@
+cargo fmt --check: passed
+cargo clippy --release --locked --all-targets --features python -- -D warnings: passed
+cargo test --release --locked: passed
+test domain::tests::typed_sir_metrics_serialize_like_the_json_value ... ok
+test sir_fsp::tests::prepared_projection_declines_bindings_it_does_not_reproduce ... ok
+test domain::tests::gathered_moran_update_matches_the_scatter_update_bit_for_bit ... ok
+test tests::bulk_moran_charges_match_per_row_charges_at_every_limit ... ok
+test tests::cli_values_parse_the_same_records_as_the_serialized_batch ... ok
+test tests::model_and_candidate_validation_are_independent ... ok
+test tests::prepared_sir_records_equal_the_vendored_solver_records ... ok
+test tests::prepared_workers_return_same_completed_records ... ok
+test tests::score_matrix_matches_scores_json_for_dimension_zero_models ... ok
+test tests::score_matrix_matches_scores_json_for_sir_rows_and_budgets ... ok
+test tests::score_matrix_rejects_invalid_shapes_and_budgets ... ok
+test tests::scores_keep_order_status_steps_and_objective ... ok
+test sir_fsp::tests::prepared_projection_matches_the_vendored_solver_bit_for_bit ... ok
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.77s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+describe: passed
+run models/request.json: exit 0
+examples/sweep: exit 0
+examples/matrix_scan: exit 0
+matrix_scan output matches examples/python/outputs/matrix_scan.txt
+example.json unchanged
+validation.json identical to 0.2.0
+validation/validate.py against target/release/population-epidemiology: exit 0
+cargo package --locked --allow-dirty: exit 101 (see cargo-package.txt)

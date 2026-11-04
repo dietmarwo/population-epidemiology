@@ -1,0 +1,174 @@
+From 155cb29ace55c60d000fc2489349f68b5744062f Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 4 Nov 2026 11:50:48 -0400
+Subject: [PATCH 04/12] Round 4: Charge unmonitored Moran row visits in bulk
+
+Without a deadline or cancel file, the work limit is the only possible
+stop, so charge all states x (updates + 1) logical row visits with one
+Work::advance before the recurrence and drop the per-row step from the
+inner loop. Status, detail and step counts are unchanged; a candidate
+that exceeds its budget now stops before computing. Monitored budgets
+keep interleaved per-row checks. A unit test compares unmonitored and
+monitored records at limits around every row boundary.
+
+Workload: lean domain (48 Moran cases, scores on both sides), 11
+samples.
+Before median: 3.292 ms. After median: 3.051 ms. Speedup: 1.08x.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ evidence/performance-0.3.0/plan.md            | 19 ++++++++++
+ .../round04-lean-domain.json                  | 36 +++++++++++++++++++
+ src/domain.rs                                 | 21 +++++++----
+ src/lib.rs                                    | 27 ++++++++++++++
+ 4 files changed, 97 insertions(+), 6 deletions(-)
+ create mode 100644 evidence/performance-0.3.0/round04-lean-domain.json
+
+diff --git a/evidence/performance-0.3.0/plan.md b/evidence/performance-0.3.0/plan.md
+index 3404263..cb8fceb 100644
+--- a/evidence/performance-0.3.0/plan.md
++++ b/evidence/performance-0.3.0/plan.md
+@@ -119,3 +119,22 @@ transitions and 65 updates, about 92 us per case.
+ - Result: 4.432 ms before, 3.394 ms after, 1.31x (`round03-domain.json`).
+   Kept. The unit test confirms bit-identical laws; `validate.py` also
+   passed.
++
++## Round 4: charge unmonitored Moran row visits in bulk
++
++- Change: without a deadline or cancel file, charge all
++  `states x (updates + 1)` logical row visits with one `Work::advance`
++  before the recurrence, and drop the per-row step from the inner loop.
++  Without monitoring, the only step outcome is the work limit, so the
++  status, detail and step count are the same as charging the visits one
++  at a time; a budget-limited candidate now stops before computing. Monitored budgets keep the
++  interleaved per-row checks.
++- Workload: lean `domain` (scores on both sides), round 3 against this
++  round.
++- Expected effect: about 12,350 step calls per case out of about 70 us,
++  roughly 1.1x to 1.2x.
++- Decision: the brief's rule. Results are bit-identical; a unit test
++  compares unmonitored and monitored records over a range of
++  `max_steps` values around the limit.
++- Result: 3.292 ms before, 3.051 ms after, 1.08x
++  (`round04-lean-domain.json`). Kept.
+diff --git a/evidence/performance-0.3.0/round04-lean-domain.json b/evidence/performance-0.3.0/round04-lean-domain.json
+new file mode 100644
+index 0000000..766fe56
+--- /dev/null
++++ b/evidence/performance-0.3.0/round04-lean-domain.json
+@@ -0,0 +1,36 @@
++{
++  "workload": "domain",
++  "before_mode": "scores",
++  "after_mode": "scores",
++  "before_seconds": [
++    0.0032922022000000002,
++    0.0032975852,
++    0.0032762010000000003,
++    0.0032606632000000005,
++    0.0032831239999999997,
++    0.0032917822,
++    0.0030616109999999997,
++    0.0033590134000000002,
++    0.0030676282,
++    0.0059081326,
++    0.0058600568
++  ],
++  "after_seconds": [
++    0.003049981,
++    0.0030616442,
++    0.0030423973999999998,
++    0.0030514438000000003,
++    0.0030359514,
++    0.0030326757999999997,
++    0.0028525729999999997,
++    0.0043074587999999995,
++    0.0052016043999999996,
++    0.0052812352,
++    0.0052244536
++  ],
++  "medians_seconds": [
++    0.0032917822,
++    0.0030514438000000003
++  ],
++  "speedup": 1.0787621911961807
++}
+diff --git a/src/domain.rs b/src/domain.rs
+index 688e6d0..e3efa11 100644
+--- a/src/domain.rs
++++ b/src/domain.rs
+@@ -425,18 +425,27 @@ fn moran(
+         incoming,
+         initial,
+     } = topology;
+-    // Charge the same logical row visits as the cold construction.
+-    for _ in states {
+-        work.step()?;
++    // Charge the same logical row visits as the cold construction and one
++    // row visit per state and update, as in the scatter update. Without a
++    // deadline or cancel file, the work limit is the only possible stop, so
++    // charging every visit up front gives the same status and step count.
++    let monitored = work.monitored;
++    if monitored {
++        for _ in states {
++            work.step()?;
++        }
++    } else {
++        work.advance(states.len() as u64 * (updates as u64 + 1))?;
+     }
+     let mut law = vec![0.0; states.len()];
+     let mut next = vec![0.0; states.len()];
+     law[*initial] = 1.0;
+     for _ in 0..updates {
+-        // One logical row visit per state, as in the scatter update. A
+-        // zero-mass source adds +0.0, which leaves the sum unchanged.
++        // A zero-mass source adds +0.0, which leaves the sum unchanged.
+         for (out, offset) in next.iter_mut().zip(offsets.windows(2)) {
+-            work.step()?;
++            if monitored {
++                work.step()?;
++            }
+             let mut sum = 0.0;
+             for &(from, p) in &incoming[offset[0]..offset[1]] {
+                 sum += law[from] * p;
+diff --git a/src/lib.rs b/src/lib.rs
+index 94a86d9..a45f9c1 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -706,6 +706,33 @@ mod tests {
+         assert_eq!(rows[0].status, "infeasible");
+     }
+ 
++    #[test]
++    fn bulk_moran_charges_match_per_row_charges_at_every_limit() {
++        let model = json!({"kind":"moran","population":4,"mutant_a":1,"mutant_b":2,"updates":6});
++        let prepared = Prepared::new(&model.to_string()).unwrap();
++        let candidates = json!([{"id":"m","parameters":[]}]).to_string();
++        let absent = std::env::temp_dir().join(format!("pe-moran-absent-{}", std::process::id()));
++        // 15 states, charged once for construction and once per update.
++        let total = 15 * 7;
++        for max_steps in [1, 14, 15, 16, 29, 30, 31, total - 1, total, total + 1] {
++            let unmonitored = json!({"max_steps": max_steps}).to_string();
++            let monitored = json!({"max_steps": max_steps, "cancel_file": absent}).to_string();
++            let record = prepared.evaluate_json(&candidates, &unmonitored).unwrap();
++            assert_eq!(
++                record,
++                prepared.evaluate_json(&candidates, &monitored).unwrap()
++            );
++            let row: Value = serde_json::from_str(&record).unwrap();
++            let expected = if max_steps >= total {
++                "complete"
++            } else {
++                "work_limit"
++            };
++            assert_eq!(row["records"][0]["status"], expected);
++            assert_eq!(row["records"][0]["steps"], max_steps.min(total));
++        }
++    }
++
+     #[test]
+     fn model_and_candidate_validation_are_independent() {
+         let mut example = fixture();
+-- 
+2.43.0
+

@@ -1,0 +1,5 @@
+DE: 1830 rows scored in 61 score_matrix calls, 16 penalized rows, 50 ms
+DE best [0.700002, 0.400001] train MSE 9.415e-14
+Nelder-Mead polish [0.7, 0.4] train MSE 1.906e-29 (179 evaluations)
+traced replay: holdout MSE 7.351e-27 | FSP states 75 | FSP work 25936
+truth used to generate the packaged observations: [0.7, 0.4]

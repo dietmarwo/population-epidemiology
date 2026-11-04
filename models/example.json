@@ -1,0 +1,28 @@
+{
+  "model": {
+    "kind": "sir",
+    "susceptible": 9,
+    "infected": 2,
+    "recovered": 1,
+    "sample_times": [
+      0.0,
+      1.0,
+      2.0,
+      3.0,
+      5.0
+    ],
+    "observations": [
+      2.0,
+      2.1636620318528887,
+      2.144365958030371,
+      1.9770975701117333,
+      1.4430517220888002
+    ],
+    "train_count": 3,
+    "tolerance": 1e-11
+  },
+  "parameters": [
+    0.7,
+    0.4
+  ]
+}

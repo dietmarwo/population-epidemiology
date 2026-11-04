@@ -1,0 +1,6 @@
+CMA-ES: 928 evaluations in 58 generations, 0 penalized rows, 134 ms
+estimate beta 1.0914 gamma 0.3472 (truth [1.1, 0.35]), R0 3.144
+train MSE 0.0111 holdout MSE 0.0201
+at the truth: train MSE 0.0116 holdout MSE 0.0221
+observed: [3.0, 4.392, 5.661, 6.054, 5.801, 4.939, 4.023, 2.508, 1.686, 1.154, 0.553]
+fitted:   [3.0, 4.579, 5.688, 5.995, 5.651, 4.956, 4.147, 2.667, 1.608, 0.934, 0.529]

@@ -1,0 +1,45 @@
+{
+  "version": "0.3.0",
+  "host": "2 vCPUs, Intel(R) Xeon(R) Processor @ 2.10GHz (KVM), Rust 1.97.0, CPython 3.12",
+  "all_steps_ran_inside": "/home/claude/craft5/cpu.lock",
+  "rust": {
+    "cargo fmt --check": "passed",
+    "cargo clippy --release --locked --all-targets --features python -- -D warnings (PYO3_PYTHON=/usr/bin/python3.12)": "passed",
+    "cargo test --release --locked": "passed, 13 unit tests",
+    "population-epidemiology describe": "evidence/capabilities.json",
+    "population-epidemiology run models/request.json": "exit 0, evidence/cli.json; equal to the 0.2.0 output except the version string",
+    "examples/sweep models/example.json": "exit 0, evidence/native-sweep.json; equal to the 0.2.0 output",
+    "examples/matrix_scan models/example.json": "exit 0, output equals examples/python/outputs/matrix_scan.txt",
+    "validation/validate.py target/release/population-epidemiology": "passed in a scratch copy; regenerated models/example.json byte-identical and evidence/validation.json equal to 0.2.0",
+    "cargo package --locked --allow-dirty": "fails as expected: crn-craft is a path dependency without a crates.io release (evidence/release-0.3.0/cargo-package.txt)"
+  },
+  "python": {
+    "sdist": {
+      "command": "maturin sdist",
+      "file": "packages/population_epidemiology-0.3.0.tar.gz",
+      "sha256": "31416b57dfc7b6e2a1a23c5650f27a763992c34a57f20fb34ce06ba63711872b"
+    },
+    "wheel": {
+      "command": "maturin build --release --locked --interpreter /usr/bin/python3.12, run inside the extracted sdist",
+      "file": "packages/population_epidemiology-0.3.0-cp310-abi3-manylinux_2_34_x86_64.whl",
+      "sha256": "64dfbb5c5268c0cea79eba81b31e6c7d644c5042bf93680fa68c920254517490",
+      "native_module_sha256": "0310232883d5468e4416f1ae21411cc93cf28b5b7fedd7a28a7b67aa6cf11db4",
+      "native_module_matches_timed_wheel": true
+    },
+    "fresh_venv": "CPython 3.12 venv with the wheel, NumPy 2.3.5 and SciPy 1.17.0 (fcmaes 2.1.0 added for the examples)",
+    "validation/installed.py": "passed, evidence/installed.json (ordered replay, 21 retained attempts, 12 resumed results after cancel and resume)",
+    "validation/release_checks.py docs/tutorial.md docs/user-manual.md": {
+      "status": "passed",
+      "tutorial_python_blocks": 5,
+      "manual_python_blocks": 18,
+      "lean_api_and_budget_parity": true,
+      "matrix_api_parity": true,
+      "numpy_matrix_input": true
+    },
+    "validation/run_campaign.py models/campaign.json, twice on one database": "identical output, evidence/campaign-replay.json",
+    "validation/optimize_performance.py (full)": "evidence/scipy-search.json",
+    "examples/python/*.py": "all ran against the installed wheel; outputs in examples/python/outputs/",
+    "validation/check_crn_ssa.py": "ran with a CRN-craft 0.2.0 Python wheel from an existing environment (read-only, python -B -I) in a scratch copy; evidence/crn-ssa.json identical to 0.2.0",
+    "note": "The final sdist and wheel were rebuilt after the documentation was complete; installed.py, release_checks.py, the two campaign runs and optimize_performance.py ran again against that wheel. The examples ran against an earlier build of the same source whose native module has the same SHA-256."
+  }
+}

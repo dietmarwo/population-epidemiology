@@ -1,0 +1,667 @@
+From 5a9acbf3ce9776ce832ef9dd8eca7437a9a00965 Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Wed, 4 Nov 2026 02:55:13 +0100
+Subject: [PATCH 12/12] Document performance release, tutorials and
+ architecture
+
+---
+ Cargo.lock                         |   2 +-
+ Cargo.toml                         |   2 +-
+ README.md                          |   8 +-
+ docs/architecture.md               | 102 +++++++++++++++++
+ docs/implementation-0.1.0.md       |  69 +++++++++++
+ docs/tutorial.md                   | 177 +++++++++++++++++++++++++++++
+ pyproject.toml                     |   2 +-
+ validation/optimize_performance.py |  58 ++++++++++
+ validation/performance_pair.py     |  68 +++++++++++
+ validation/release_checks.py       |  64 +++++++++++
+ 10 files changed, 546 insertions(+), 6 deletions(-)
+ create mode 100644 docs/architecture.md
+ create mode 100644 docs/implementation-0.1.0.md
+ create mode 100644 docs/tutorial.md
+ create mode 100644 validation/optimize_performance.py
+ create mode 100644 validation/performance_pair.py
+ create mode 100644 validation/release_checks.py
+
+diff --git a/Cargo.lock b/Cargo.lock
+index 0d509f2..ede849f 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -114,7 +114,7 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
+ 
+ [[package]]
+ name = "population-epidemiology"
+-version = "0.1.0"
++version = "0.2.0"
+ dependencies = [
+  "crn-craft",
+  "pyo3",
+diff --git a/Cargo.toml b/Cargo.toml
+index 0e43fb4..662a5f3 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -1,6 +1,6 @@
+ [package]
+ name = "population-epidemiology"
+-version = "0.1.0"
++version = "0.2.0"
+ edition = "2024"
+ rust-version = "1.88"
+ description = "Bounded population-epidemiology research evaluator"
+diff --git a/README.md b/README.md
+index 5a6367b..e39eeb9 100644
+--- a/README.md
++++ b/README.md
+@@ -1,8 +1,10 @@
+-# population-epidemiology 0.1.0
++# population-epidemiology 0.2.0
+ 
+ A bounded research evaluator. See the [model card](docs/model.md) for units,
+ equations and supported behavior. The accompanying implementation log
+ records which milestones ran and which use a bounded fallback.
++See the [tutorial](docs/tutorial.md) and [architecture](docs/architecture.md).
++The [0.1.0 implementation record](docs/implementation-0.1.0.md) preserves the original scope.
+ 
+ ## Rust CLI and native example
+ 
+@@ -33,8 +35,8 @@ assert row["status"] == "complete"
+ print(row["score"])
+ ```
+ 
+-`Prepared.batch` crosses into native code once per batch. A bounded thread
+-pool evaluates candidates in isolation and returns records in input order.
++`Prepared.batch` crosses into native code once per batch. A set of scoped
++workers evaluates candidates in isolation and returns records in input order.
+ The local Python campaign commits results to SQLite, preserves interrupted
+ attempts and reuses completed records by candidate, scenario, settings and
+ build identity. Fixed-work replay is scoped to the tested build.
+diff --git a/docs/architecture.md b/docs/architecture.md
+new file mode 100644
+index 0000000..8fb6927
+--- /dev/null
++++ b/docs/architecture.md
+@@ -0,0 +1,102 @@
++# Population epidemiology architecture
++
++Version 0.2.0. Evaluate a small, fixed-population SIR model, neutral two-mutant Moran drift, and an exact two-state rate calendar.
++
++## Evaluation pipeline
++
++```mermaid
++flowchart TD
++    P["Prepared model"] --> B["Candidate batch"]
++    B --> V["Validate IDs and budgets"]
++    V -->|Single worker or candidate| S["Inline evaluation"]
++    V -->|Multiple workers| W["Scoped worker evaluation"]
++    S --> D["Domain kernel and work counter"]
++    W --> D
++    D --> R["Ordered typed result"]
++    R -->|Full| F["Metrics and optional trace"]
++    R -->|Lean| L["Score and status"]
++```
++
++| Boundary | Location | Responsibility |
++| --- | --- | --- |
++| Request and CLI | `src/main.rs`, `src/lib.rs`, `models/request.json` | Versioned request schema, exact model-byte hash, typed validation, JSON output and exit code |
++| Python boundary | `python/population_epidemiology/__init__.py`, PyO3 in `src/lib.rs` | Encode once per batch, release the Python GIL during native evaluation, decode the typed result envelope |
++| Prepared engine | `src/lib.rs` | Own immutable domain data, enforce batch rules, dispatch candidates and retain ordered result rows |
++| Domain | `src/domain.rs` | Bind the candidate, execute model logic, classify status and compute a minimization objective |
++| Campaign | `python/population_epidemiology/campaign.py` | Local SQLite replay, attempt journal and complete-result caching |
++| Verification | `validation/`, `examples/`, `evidence/` | Independent checks, executable examples and paired performance observations |
++
++## Data and execution contracts
++
++`Prepared::new` hashes the model bytes, deserializes the model and
++validates its bounds before building domain caches. The Python
++wrapper encodes models with sorted keys and finite JSON numbers.
++Two inputs that differ in their serialized representation can
++have different provenance hashes. Result and request schema tags
++remain at 0.1. Package version is reported separately.
++
++Every batch validates candidate count (1–4096), unique IDs, parameter
++vector length (up to 64), requested workers (1–64) and trace count
++(up to 16). Parallel workers claim indexes through an atomic cursor.
++Each assigned index owns a result slot written once. After workers
++join, output is serialized in input order. Single-worker or singleton
++calls run inline. The typed prepared envelope borrows candidate IDs
++until serialization completes. The CLI retains its full `Value` API.
++
++`Work` counts domain-defined steps per candidate. Its fast branch
++handles unmonitored steps below the limit. Monitored steps check
++the cancel file, then batch deadline, then work budget. Domain
++checks can still reject an invalid candidate before it takes a step.
++Cancellation and deadlines are cooperative. The wall clock can
++change which candidates finish, while fixed-work replays should agree
++independent of worker count. Candidate parallelism creates scoped
++threads per batch. Concurrent callers should account for total
++worker demand when choosing batch settings.
++
++Full records contain domain metrics and any requested trace.
++`scores_json` in Rust and `Prepared.scores` in Python return the
++same record keys with null metrics and reject traced candidates.
++Both retain per-candidate limits, diagnostics needed for feasibility,
++numeric score checks and failure status. Full replay restores
++inspection details for the selected candidate.
++
++## Domain internals
++
++| Model | Prepared state | Evaluation and checks |
++| --- | --- | --- |
++| SIR | Observations, train boundary, time grid, initial counts and tolerance | Bind two rates, construct the CRN count model and FSP run, run the bundled solver with one inner thread, project infected first moments, score observed training points |
++| Moran | Triangular states, initial offset, flat transitions and row offsets | Allocate two probability vectors, apply the neutral recurrence in row order, derive complete marginals and optionally emit the joint law |
++| Calendar | Exact times and on-probabilities at each boundary | Charge one logical step per segment, return last probability, serialize cached boundaries in full mode |
++
++Moran topology has `(N+1)(N+2)/2` states. Parent/death outcome order is
++preserved, including repeated destinations from self replacement. CSR
++offsets avoid a heap allocation per row and improve locality without
++changing probability accumulation order. Fixed-work results still
++charge the logical topology visits and propagation visits. The calendar
++uses `expm1` for the segment change and caches the exact constant-rate
++recurrence. Its unmonitored path charges all segment visits in one
++operation. Deadline and cancel-file runs check each logical step.
++
++The SIR API retains the CRN model and run hashes and optional FSP trace
++when emitting full records. The companion and FSP solver count work at different boundaries. The CRN solver
++receives the remaining deadline and cancel file and returns its own work
++and mass diagnostics. Outer workers parallelize candidates. There is
++still an FSP topology build per rate binding and SIR remains the dominant
++cost for this fixture. See the [model card](model.md) for each objective.
++
++## Persistence and boundaries of evidence
++
++The local campaign hashes the installed extension bytes plus each
++scenario, model, candidate and work settings to locate reusable
++records. SQLite stores completed, invalid and infeasible results,
++and keeps an append-only journal of attempts. Cancelled or time-
++limited attempts remain in the journal and can be retried. SQLite
++commits each chunk atomically. A new extension build changes the
++cache namespace. The current workflow is local and exposes no
++distributed worker protocol.
++
++The package contains source, a source distribution, and a validated
++Linux x86-64 wheel. The included performance log distinguishes the
++native prepared boundary, complete Python search and clean build.
++See the [tutorial](tutorial.md) for exact commands and
++[the model card](model.md) for equations and research scope.
+diff --git a/docs/implementation-0.1.0.md b/docs/implementation-0.1.0.md
+new file mode 100644
+index 0000000..8b04048
+--- /dev/null
++++ b/docs/implementation-0.1.0.md
+@@ -0,0 +1,69 @@
++# population-epidemiology implementation log
++
++3 November 2026. Version 0.1.0. This delivery uses the bounded research
++scope recorded below. The independent references and optional comparisons
++are identified separately for each increment.
++
++## Increment results
++
++| Increment | Status | Implementation and evidence |
++| --- | --- | --- |
++| 0 | Public fallback | The original Numba research model was unavailable. Audited CRN-craft FSP and checked SSA and chose transparent fixed-population SIR and neutral two-mutant Moran fixtures. |
++| 1 | Implemented | SIR model construction uses supported CRN count mass-action laws. The native SIR path calls existing CRN-craft FSP. Moran uses a separate tiny discrete recurrence. |
++| 2 | Implemented | Independent SciPy matrix exponential and an exhaustive labeled-population oracle verify generator convention, distributions, absorbing behavior and fixation. Checked SSA agrees within a predeclared sampling bound. |
++| 3 | Bounded fallback | Returns complete two-mutant marginals for the declared neutral model and optionally its joint law. SIR retains CRN FSP provenance and numerical diagnostics. This is a separate workload from the unavailable original. |
++| 4 | Implemented with reuse limit | Prepared companion models and bounded parallel candidate batches replay across worker counts. The existing FSP API still constructs its projection for each rate binding. |
++| 5 | Implemented on bounded subset | Exact piecewise-rate two-state calendar and analytical boundary check. The SIR workflow retains constant rates. |
++| 6 | Implemented on synthetic inputs | Twelve grid points fit exact synthetic infected-count means, with held-out validation and tighter FSP reevaluation. No empirical inference or intervention recommendation is claimed. |
++| 7 | Deferred by plan gate | A structured extension requires a concrete researcher question. The existing finite-law study supplies the bounded release. |
++| 8 | Local fallback | SQLite manifest, replay and cancellation/resume evidence. External campaign contracts and independent researcher review remain open. |
++| 9 | Source and wheel release prepared | The sdist includes a pinned MIT CRN core, and a clean wheel built from it. A standalone registry crate failed because CRN-craft is a local source dependency. The ZIP still builds the Rust companion offline when its locked dependencies are cached. |
++
++## Numerical results
++
++The maximum FSP state-probability difference versus dense propagation was **8.91e-13**. The neutral fixation marginal converged to 0.333333333. The checked SSA infected-mean deviation was 0.0358 against a predeclared 0.4024 bound. The held-out SIR fitting MSE was 4.40e-24.
++
++The optional in-process SciPy differential-evolution demonstration made
++48 evaluations and replayed its selected candidate.
++It used the packaged example and its own local bounds. The domain-specific
++grid and holdout evidence are in `evidence/validation.json`.
++
++## Installed performance and replay
++
++The following are medians of three 96-candidate batch observations,
++measured in a clean CPython 3.12 environment with the installed wheel.
++The scenarios and candidate inputs are identical within a row pair.
++Times include native crossing and compact JSON result conversion.
++
++| Boundary | Time |
++| --- | ---: |
++| Cold preparation and batch, one worker | 17.850 ms |
++| Prepared batch, one worker | 17.826 ms |
++| Prepared batch, four workers | 5.968 ms |
++
++The replay test reversed candidate order and changed worker count. It
++recovered 12 completed SQLite records across cancellation and retained
++21 attempts. This campaign uses a local database and package-build
++identity. Cross-machine determinism and distributed worker behavior
++were outside the test scope.
++
++## Release evidence
++
++- `cargo fmt`, Clippy with warnings denied and locked Rust release tests passed.
++- The native sweep and numerical validation ran against a release build.
++- A wheel built from the extracted sdist and installed offline into a fresh
++  environment. The wheel target is Linux x86-64, CPython 3.10+ ABI. Actual
++  verification used CPython 3.12 on x86_64.
++- The standalone registry crate check failed at the vendored CRN path dependency. Use the bundled Rust source, Python sdist or wheel.
++- Model and source manifests are in `docs/`. Raw timing, numerical and
++  clean-install results are in `evidence/`.
++
++The source was staged in successive local commits. Each increment above
++records its own outcome, while related implementation changes share
++commits.
++
++- `0946062` Define versioned evaluation and packaging boundaries
++- `9d0e091` Implement bounded domain evaluator and resumable local execution
++- `20003f1` Validate model laws and add bounded search and installation examples
++- `724eee4` Prepare source distributions and document validated research scope
++- `6451511` Canonicalize campaign replay output
+diff --git a/docs/tutorial.md b/docs/tutorial.md
+new file mode 100644
+index 0000000..59ea357
+--- /dev/null
++++ b/docs/tutorial.md
+@@ -0,0 +1,177 @@
++# Population epidemiology tutorial
++
++Evaluate a small, fixed-population SIR model, neutral two-mutant Moran drift, and an exact two-state rate calendar. This guide uses the examples shipped with version 0.2.0.
++
++## 1. Install and run the example
++
++Open the package root after extracting the ZIP. The bundled wheel was
++built for Linux x86-64 with a CPython 3.10+ stable ABI and tested with
++CPython 3.12. Create a virtual environment with a compatible Python.
++
++```sh
++python3 -m venv .venv
++. .venv/bin/activate
++python -m pip install --no-deps packages/*.whl
++```
++
++If the wheel tag is incompatible, build the supplied Rust/Python source
++on the target system with Rust 1.88+ and Maturin 1.9.6. Cargo needs the
++locked dependencies available from its registry or cache.
++
++```sh
++python -m pip install 'maturin==1.9.6'
++maturin build --release --locked --out dist
++python -m pip install --no-deps dist/*.whl
++```
++
++```python
++from population_epidemiology import Prepared, load_example
++
++case = load_example()
++prepared = Prepared(case["model"])
++row = prepared.evaluate(case["parameters"], trace=True)
++assert row["status"] == "complete", row
++print(row["id"], row["steps"], row["score"])
++print(list(row["metrics"]))
++```
++
++The model is validated when you create `Prepared`. A malformed model
++raises `ValueError`. A well-formed batch can still contain an invalid,
++infeasible, or interrupted candidate. Its row carries a status and
++detail. The optimizer convention is to minimize `score`.
++
++## 2. Run the domain workflow
++
++The following examples continue in the same Python session.
++
++### Fit infection and recovery
++
++The packaged fixture starts with 9 susceptible, 2 infected and 1 recovered.
++Time is measured in the model's time unit. The two candidate coordinates
++are infection rate `beta` and recovery rate `gamma`, both per time unit.
++The infection propensity is `beta*S*I/N` and recovery is `gamma*I`.
++The objective is mean squared error on the first `train_count` sample
++positions that have observations. JSON `null` masks a measurement.
++
++```python
++for beta, gamma in [(0.5, 0.4), (0.7, 0.4), (0.9, 0.5)]:
++    row = prepared.evaluate([beta, gamma], trace=True)
++    if row["status"] == "complete":
++        metrics = row["metrics"]
++        print(beta, gamma, row["score"], metrics["holdout_mse"])
++        print(metrics["infected_means"], metrics["error"])
++```
++
++Keep the observation grid and training boundary fixed while searching.
++After selecting rates, evaluate again with a tighter supported
++`tolerance` and compare the time series, holdout loss and numerical
++diagnostics. FSP state bounds in this companion follow the fixed
++population. The supplied reference compares probabilities against a
++dense independent generator on a small case.
++
++### Replay neutral drift and a rate calendar
++
++```python
++neutral = Prepared({"kind": "moran", "population": 8,
++                    "mutant_a": 2, "mutant_b": 1, "updates": 40})
++m = neutral.evaluate([], trace=True)["metrics"]
++print(m["marginal_a"], m["marginal_b"], m["mass"])
++calendar = Prepared({"kind": "calendar", "initial_on_probability": 0,
++                     "segments": [{"duration": 2, "on_rate": 1, "off_rate": 0},
++                                  {"duration": 1, "on_rate": 0, "off_rate": 2}]})
++print(calendar.evaluate([])["metrics"]["boundary_time_and_on_probability"])
++```
++
++Moran updates sample parent and death with replacement. The joint trace
++lists its triangular state order. Marginals include extinction at index
++0 and fixation at index `population`. Calendar rates are fixed by the
++model. Change the model to change a segment rate. A zero total rate holds
++the probability fixed. The calendar path can be checked against
++`(1 - exp(-2)) * exp(-2)` at the final boundary.
++
++## 3. Batch candidates and replay the winner
++
++```python
++candidates = [
++    {"id": "first", "parameters": case["parameters"]},
++    {"id": "second", "parameters": case["parameters"]},
++]
++scores = prepared.scores(candidates, workers=2)["records"]
++assert [row["id"] for row in scores] == ["first", "second"]
++winner = min((r for r in scores if r["status"] == "complete"),
++             key=lambda r: r["score"])
++candidate = next(c for c in candidates if c["id"] == winner["id"])
++replay = prepared.evaluate(candidate["parameters"], trace=True)
++assert replay["status"] == "complete", replay
++print(replay["score"], replay["metrics"])
++```
++
++Replace the duplicate vectors with distinct choices for a real search.
++Use `batch` if you need the full metrics for every row. `scores` returns
++ordered records with score, status, steps and detail, and `metrics: null`.
++It rejects any candidate with `trace: true`. A one-worker batch or a
++singleton runs inline. Larger batches can try two or four workers.
++Measure before setting a worker count for a real workload.
++
++The optional differential-evolution driver times preparation, seeded
++search and traced replay as one run. Install SciPy for this example.
++
++```sh
++python -m pip install scipy
++python validation/optimize_performance.py population_epidemiology --scores
++python validation/optimize_performance.py population_epidemiology
++```
++
++The driver uses small local bounds and a short fixed search budget.
++For a scientific result, use problem-specific bounds, an explicit
++feasibility penalty or constraint policy, and a held-out evaluation.
++
++## 4. Run and resume a local campaign
++
++```sh
++python validation/run_campaign.py population_epidemiology models/campaign.json campaign.sqlite > first.json
++python validation/run_campaign.py population_epidemiology models/campaign.json campaign.sqlite > replay.json
++cmp first.json replay.json
++```
++
++The manifest holds scenario models and candidate vectors. Keep IDs
++unique inside each list. Reuse the database to resume identical work.
++The native build, model, scenario, candidate and work settings are
++part of cache identity. A new wheel re-evaluates cached work under
++its own build identity. A cancel file passed as `cancel_file` or a
++`wall_ms` budget can stop new evaluations cooperatively. Inspect
++statuses in the attempt journal before rerunning.
++
++## 5. Use the Rust CLI and benchmark
++
++```sh
++cargo build --release --locked --bins --examples
++target/release/population-epidemiology describe
++target/release/population-epidemiology run models/request.json
++target/release/examples/sweep models/example.json
++target/release/examples/performance models/example.json serial
++CRAFT_SCORES=1 target/release/examples/performance models/example.json serial
++```
++
++The CLI reads a request file or standard input with `run -`. Exit code
++0 indicates complete rows, 1 indicates a rejected request and 2
++indicates one or more unsuccessful rows in a well-formed request.
++The benchmark prints elapsed seconds per prepared batch after warm-up.
++Use `parallel` for four workers, `trace` for traced evaluations,
++or `domain` and `domain2` for the package's supplemental cases.
++With a previous benchmark executable built from the baseline and this
++one, `validation/performance_pair.py BEFORE AFTER models/example.json serial`
++checks output parity and times both. See the included performance log
++and raw evidence for the exact workloads and comparison boundaries.
++
++## 6. Verify results
++
++```sh
++cargo test --release --locked
++cargo clippy --locked --all-targets --features python -- -D warnings
++python validation/validate.py target/release/population-epidemiology
++```
++
++Consult the [model card](model.md) for supported inputs, the
++[architecture guide](architecture.md) for data flow and numerical
++assumptions, and the [source notes](sources.md) for references.
+diff --git a/pyproject.toml b/pyproject.toml
+index 4315b0a..5800d7f 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -4,7 +4,7 @@ build-backend = "maturin"
+ 
+ [project]
+ name = "population-epidemiology"
+-version = "0.1.0"
++version = "0.2.0"
+ requires-python = ">=3.10"
+ description = "Prepared population-epidemiology research evaluations"
+ 
+diff --git a/validation/optimize_performance.py b/validation/optimize_performance.py
+new file mode 100644
+index 0000000..b6a8836
+--- /dev/null
++++ b/validation/optimize_performance.py
+@@ -0,0 +1,58 @@
++"""Time one complete, seeded optimization plus a full solution replay."""
++
++import argparse
++import importlib
++import json
++from time import perf_counter
++
++from scipy.optimize import differential_evolution
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument("module")
++    parser.add_argument("--scores", action="store_true")
++    args = parser.parse_args()
++    package = importlib.import_module(args.module)
++    example = package.load_example()
++    x0 = example["parameters"]
++    bounds = [(max(0.0, x * .6), max(.05, x * 1.4)) for x in x0]
++    failures = 0
++
++    def objective(parameters):
++        nonlocal failures
++        if args.scores:
++            row = prepared.scores([{"id": "one", "parameters": parameters.tolist()}])["records"][0]
++        else:
++            row = prepared.evaluate(parameters.tolist())
++        if row["status"] != "complete":
++            failures += 1
++            return 1e20
++        return row["score"]
++
++    start = perf_counter()
++    prepared = package.Prepared(example["model"])
++    initialized = perf_counter()
++    best = differential_evolution(
++        objective, bounds, seed=17, maxiter=5, popsize=4, polish=False, tol=0, x0=x0,
++    )
++    searched = perf_counter()
++    row = prepared.evaluate(best.x.tolist(), trace=True)
++    finished = perf_counter()
++    if row["status"] != "complete":
++        raise RuntimeError(row)
++    print(json.dumps({
++        "mode": "scores" if args.scores else "full",
++        "total_seconds": finished - start,
++        "prepare_seconds": initialized - start,
++        "search_seconds": searched - initialized,
++        "replay_seconds": finished - searched,
++        "evaluations": int(best.nfev),
++        "failures": failures,
++        "best": best.x.tolist(),
++        "score": row["score"],
++    }))
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/validation/performance_pair.py b/validation/performance_pair.py
+new file mode 100644
+index 0000000..af36545
+--- /dev/null
++++ b/validation/performance_pair.py
+@@ -0,0 +1,68 @@
++"""Pair two compiled copies of examples/performance.rs and check semantic replay."""
++
++import argparse
++import json
++import math
++import os
++import statistics
++import subprocess
++
++
++def equal(left, right, key=""):
++    if isinstance(left, float) or isinstance(right, float):
++        if not isinstance(left, (int, float)) or not isinstance(right, (int, float)):
++            raise ValueError((key, left, right))
++        absolute = 5e-7 if key.removesuffix("[]").endswith("_j_kg") else 1e-10
++        if not math.isclose(left, right, rel_tol=5e-10, abs_tol=absolute):
++            raise ValueError((key, left, right))
++    elif isinstance(left, dict) and isinstance(right, dict) and left.keys() == right.keys():
++        for k, value in left.items():
++            equal(value, right[k], key + "." + k)
++    elif isinstance(left, list) and isinstance(right, list) and len(left) == len(right):
++        for a, b in zip(left, right, strict=True):
++            equal(a, b, key + "[]")
++    elif left != right:
++        raise ValueError((key, left, right))
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument("before")
++    parser.add_argument("after")
++    parser.add_argument("fixture")
++    parser.add_argument("workload", choices=("one", "serial", "parallel", "trace", "invalid", "domain", "domain2"))
++    parser.add_argument("--samples", type=int, default=5)
++    parser.add_argument("--before-scores", action="store_true")
++    parser.add_argument("--after-scores", action="store_true")
++    args = parser.parse_args()
++    if args.samples < 1:
++        parser.error("--samples must be positive")
++    binaries = [args.before, args.after]
++    scores = [args.before_scores, args.after_scores]
++
++    def run(i, *extra):
++        env = os.environ.copy()
++        env.pop("CRAFT_SCORES", None)
++        if scores[i]:
++            env["CRAFT_SCORES"] = "1"
++        return subprocess.check_output([binaries[i], args.fixture, args.workload, *extra], env=env)
++
++    probes = [json.loads(run(i, "probe")) for i in range(2)]
++    for p in probes:
++        p.pop("version")
++        if any(scores):
++            for row in p["records"]:
++                row["metrics"] = None
++    equal(*probes)
++    samples = [[], []]
++    for i in range(args.samples):
++        for j in (0, 1) if i % 2 == 0 else (1, 0):
++            samples[j].append(float(run(j)))
++    medians = list(map(statistics.median, samples))
++    print(json.dumps({"workload": args.workload, "before_seconds": samples[0],
++                      "after_seconds": samples[1], "medians_seconds": medians,
++                      "speedup": medians[0] / medians[1]}, indent=2))
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/validation/release_checks.py b/validation/release_checks.py
+new file mode 100644
+index 0000000..e94efe9
+--- /dev/null
++++ b/validation/release_checks.py
+@@ -0,0 +1,64 @@
++"""Check the installed lean API and run the Python snippets in the tutorial."""
++
++import importlib
++import json
++from pathlib import Path
++import re
++import sys
++from tempfile import TemporaryDirectory
++
++module, tutorial = sys.argv[1:]
++package = importlib.import_module(module)
++example = package.load_example()
++prepared = package.Prepared(example["model"])
++candidates = [{"id": "ok", "parameters": example["parameters"]},
++              {"id": "bad", "parameters": [1] * 63}]
++with TemporaryDirectory() as tmp:
++    flag = Path(tmp) / "cancel"
++    flag.touch()
++    for budget in ({}, {"workers": 4}, {"max_steps": 1}, {"cancel_file": str(flag)}):
++        full = prepared.batch(candidates, **budget)
++        lean = prepared.scores(candidates, **budget)
++        assert lean["model_sha256"] == full["model_sha256"]
++        assert lean["records"] == [r | {"metrics": None} for r in full["records"]]
++        if "cancel_file" in budget:
++            assert lean["records"][0]["status"] == "cancelled"
++    if module == "population_epidemiology":
++        calendar = package.Prepared({"kind": "calendar", "initial_on_probability": 0.5,
++                                     "segments": [{"duration": 1, "on_rate": 0, "off_rate": 0}] * 3})
++        query = [{"id": "calendar", "parameters": []}]
++        limited = calendar.scores(query, max_steps=2)["records"][0]
++        assert (limited["status"], limited["steps"]) == ("work_limit", 2)
++        canceled = calendar.scores(query, cancel_file=str(flag))["records"][0]
++        assert (canceled["status"], canceled["steps"]) == ("cancelled", 0)
++        complete = calendar.scores(query, max_steps=3)["records"][0]
++        assert (complete["status"], complete["steps"], complete["score"]) == ("complete", 3, 0.5)
++    if module == "rail_craft":
++        closed = package.Prepared({
++            "resources": [{"name": "one", "clearance": 0}], "horizon": 20,
++            "trains": [{"name": "train", "release": 0, "planned": 0, "priority": 0,
++                        "route": [{"resource": 0, "duration": 1}]}],
++            "closures": [{"resource": 0, "start": a, "end": b} for a, b in ((0, 4), (2, 7), (7, 8))],
++        })
++        row = closed.evaluate([0, 0], trace=True)
++        assert row["status"] == "complete"
++        assert row["metrics"]["intervals"][0]["entry"] == 8
++    if module == "robotics_control_craft":
++        long = package.Prepared(example["model"] | {"dt_s": 1e-4})
++        assert long.evaluate(example["parameters"])["status"] == "complete"
++        traced = long.evaluate(example["parameters"], trace=True)
++        assert traced["status"] == "invalid" and traced["steps"] == 10_001
++try:
++    prepared.scores([candidates[0] | {"trace": True}])
++except ValueError:
++    pass
++else:
++    raise AssertionError("scores accepted a traced candidate")
++
++snippets = re.findall(r"^```python\n(.*?)^```", Path(tutorial).read_text(), re.M | re.S)
++assert len(snippets) >= 4
++namespace = {}
++for i, snippet in enumerate(snippets, 1):
++    exec(compile(snippet, f"tutorial-{i}", "exec"), namespace)
++print(json.dumps({"status": "passed", "tutorial_python_blocks": len(snippets),
++                  "lean_api_and_budget_parity": True}))
+-- 
+2.51.1
+

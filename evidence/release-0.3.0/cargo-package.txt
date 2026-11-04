@@ -1,0 +1,10 @@
+warning: manifest has no documentation, homepage or repository
+  |
+  = note: see https://doc.rust-lang.org/cargo/reference/manifest.html#package-metadata for more info
+error: failed to verify manifest at `/home/claude/craft5/population-epidemiology/Cargo.toml`
+
+Caused by:
+  all dependencies must have a version requirement specified when packaging.
+  dependency `crn-craft` does not specify a version
+  Note: The packaged dependency will use the version from crates.io,
+  the `path` specification will be removed from the dependency declaration.

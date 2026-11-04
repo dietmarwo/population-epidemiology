@@ -1,0 +1,67 @@
+From bfb3cd6b5dab27e44a580e874f256fabb1bdf5f0 Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Wed, 4 Nov 2026 02:44:01 +0100
+Subject: [PATCH 03/12] Assemble parallel records in input order without
+ sorting
+
+---
+ src/lib.rs | 26 +++++++++++++-------------
+ 1 file changed, 13 insertions(+), 13 deletions(-)
+
+diff --git a/src/lib.rs b/src/lib.rs
+index 0d7511c..7db0e53 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -6,7 +6,10 @@ use sha2::{Digest, Sha256};
+ use std::{
+     collections::BTreeSet,
+     path::PathBuf,
+-    sync::atomic::{AtomicUsize, Ordering},
++    sync::{
++        OnceLock,
++        atomic::{AtomicUsize, Ordering},
++    },
+     time::{Duration, Instant},
+ };
+ 
+@@ -196,28 +199,25 @@ impl Prepared {
+                 .collect()
+         } else {
+             let next = AtomicUsize::new(0);
+-            let mut records = std::thread::scope(|scope| {
+-                let mut jobs = Vec::new();
++            let slots: Vec<_> = (0..candidates.len()).map(|_| OnceLock::new()).collect();
++            std::thread::scope(|scope| {
+                 for _ in 0..budget.workers.min(candidates.len()) {
+-                    jobs.push(scope.spawn(|| {
+-                        let mut rows = Vec::new();
++                    scope.spawn(|| {
+                         loop {
+                             let index = next.fetch_add(1, Ordering::Relaxed);
+                             let Some(c) = candidates.get(index) else {
+                                 break;
+                             };
+                             let record = self.record(c, &budget, deadline);
+-                            rows.push((index, record));
++                            assert!(slots[index].set(record).is_ok(), "duplicate work index");
+                         }
+-                        rows
+-                    }));
++                    });
+                 }
+-                jobs.into_iter()
+-                    .flat_map(|job| job.join().expect("evaluation worker"))
+-                    .collect::<Vec<_>>()
+             });
+-            records.sort_unstable_by_key(|(index, _)| *index);
+-            records.into_iter().map(|(_, row)| row).collect()
++            slots
++                .into_iter()
++                .map(|slot| slot.into_inner().expect("missing evaluation"))
++                .collect()
+         };
+         Ok(
+             json!({"schema": concat!(env!("CARGO_PKG_NAME"), ".result/0.1"),
+-- 
+2.51.1
+

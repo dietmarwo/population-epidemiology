@@ -1,0 +1,310 @@
+From 5a2ad079c3ea09df80de32dda73276e948a77189 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 4 Nov 2026 11:49:08 -0400
+Subject: [PATCH 03/12] Round 3: Gather the Moran update by target state
+
+Store Moran transitions by target, with incoming entries in ascending
+source order and then the source's parent/death order, and compute each
+next probability as one sum instead of zeroing the next law and
+scattering every source. Each target's floating-point additions keep
+their order; zero-mass sources add +0.0. One logical step per state row
+per update is still charged. A unit test compares the gathered law with
+the scatter update bit for bit.
+
+Workload: domain (48 Moran cases, population 18, 65 updates, full
+records), 11 samples.
+Before median: 4.432 ms. After median: 3.394 ms. Speedup: 1.31x.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ evidence/performance-0.3.0/plan.md            |  36 +++++
+ .../performance-0.3.0/round03-domain.json     |  36 +++++
+ src/domain.rs                                 | 145 ++++++++++++++----
+ 3 files changed, 189 insertions(+), 28 deletions(-)
+ create mode 100644 evidence/performance-0.3.0/round03-domain.json
+
+diff --git a/evidence/performance-0.3.0/plan.md b/evidence/performance-0.3.0/plan.md
+index 31861e5..3404263 100644
+--- a/evidence/performance-0.3.0/plan.md
++++ b/evidence/performance-0.3.0/plan.md
+@@ -83,3 +83,39 @@ The JSON API boundary is about 1 us per candidate.
+   (`round02-matrix-serial.json`). Kept. `validation/validate.py` passed
+   against the round 2 CLI and reproduced `models/example.json` and
+   `evidence/validation.json` exactly.
++
++## Profile after round 2 (round 2 binary, one run each)
++
++| Workload | ms |
++| --- | ---: |
++| one (full) | 0.041 |
++| serial (full) | 3.869 |
++| lean serial / matrix serial | 2.199 / 2.149 |
++| parallel (4 workers on 2 vCPUs) | 2.762 |
++| trace (12 traced, vendored solver) | 2.179 |
++| invalid | 1.277 |
++| domain (Moran, full) | 4.427 |
++| lean domain / matrix domain | 4.570 / 4.344 |
++| domain2 (calendar, full) | 2.597 |
++
++Moran (`domain`) is now the largest workload: 190 states, about 1,500
++transitions and 65 updates, about 92 us per case.
++
++## Round 3: gather the Moran update by target state
++
++- Change: store Moran transitions by target state (incoming entries in
++  ascending source order, then the source's parent/death order) and
++  compute each next probability as one sum, instead of zeroing the next
++  law and scattering every source's contributions. The sequence of
++  floating-point additions per target is unchanged; zero-mass sources add
++  +0.0, which leaves a non-negative sum unchanged. One logical step per
++  state row per update is still charged, interleaved with the rows.
++- Workload: `domain` (48 Moran cases, full records), round 2 against
++  this round.
++- Expected effect: 1.2x to 1.5x from removing the fill and the
++  read-modify-write scatter.
++- Decision: the brief's rule. Results should be bit-identical; a unit
++  test compares the gather kernel with the scatter kernel bit for bit.
++- Result: 4.432 ms before, 3.394 ms after, 1.31x (`round03-domain.json`).
++  Kept. The unit test confirms bit-identical laws; `validate.py` also
++  passed.
+diff --git a/evidence/performance-0.3.0/round03-domain.json b/evidence/performance-0.3.0/round03-domain.json
+new file mode 100644
+index 0000000..c023ae3
+--- /dev/null
++++ b/evidence/performance-0.3.0/round03-domain.json
+@@ -0,0 +1,36 @@
++{
++  "workload": "domain",
++  "before_mode": "full",
++  "after_mode": "full",
++  "before_seconds": [
++    0.0043708402,
++    0.0043644362,
++    0.0042394588,
++    0.0045042026,
++    0.00438702,
++    0.0062512544000000005,
++    0.004534805,
++    0.0044872971999999995,
++    0.0044315792,
++    0.0043216406,
++    0.0046630454
++  ],
++  "after_seconds": [
++    0.0033943004,
++    0.003381294,
++    0.0032703154,
++    0.0034007898000000003,
++    0.0033994603999999997,
++    0.0031619018,
++    0.0034215613999999997,
++    0.0034572654000000003,
++    0.0033756966,
++    0.0033913619999999998,
++    0.0035129427999999996
++  ],
++  "medians_seconds": [
++    0.0044315792,
++    0.0033943004
++  ],
++  "speedup": 1.3055942838765833
++}
+diff --git a/src/domain.rs b/src/domain.rs
+index d918301..688e6d0 100644
+--- a/src/domain.rs
++++ b/src/domain.rs
+@@ -47,8 +47,10 @@ pub struct Model {
+ }
+ struct Moran {
+     states: Vec<(usize, usize)>,
++    /// Incoming transitions of each target state, as (source, probability)
++    /// in ascending source order and then the source's parent/death order.
+     offsets: Vec<usize>,
+-    transitions: Vec<(usize, f64)>,
++    incoming: Vec<(usize, f64)>,
+     initial: usize,
+ }
+ 
+@@ -346,37 +348,66 @@ pub fn evaluate(model: &Model, parameters: &[f64], trace: bool, work: &mut Work<
+     }
+ }
+ 
+-fn prepare_moran(n: usize, a0: usize, b0: usize) -> Moran {
++/// Outgoing (target, probability) transitions of one Moran state.
++type Transitions = Vec<(usize, f64)>;
++
++/// Triangular (a, b) states and their outgoing transitions in parent/death
++/// order, with self replacement repeated.
++fn moran_transitions(n: usize) -> (Vec<(usize, usize)>, Vec<Transitions>) {
+     let states: Vec<_> = (0..=n)
+         .flat_map(|a| (0..=n - a).map(move |b| (a, b)))
+         .collect();
+     let index = |a: usize, b: usize| a * (n + 1) - a * a.saturating_sub(1) / 2 + b;
+     let denom = (n * n) as f64;
+-    let mut offsets = Vec::with_capacity(states.len() + 1);
+-    let mut transitions = Vec::with_capacity(states.len() * 9);
+-    for &(a, b) in &states {
+-        let counts = [n - a - b, a, b];
+-        offsets.push(transitions.len());
+-        for parent in 0..3 {
+-            for death in 0..3 {
+-                if counts[parent] == 0 || counts[death] == 0 {
+-                    continue;
++    let rows = states
++        .iter()
++        .map(|&(a, b)| {
++            let counts = [n - a - b, a, b];
++            let mut row = Vec::with_capacity(9);
++            for parent in 0..3 {
++                for death in 0..3 {
++                    if counts[parent] == 0 || counts[death] == 0 {
++                        continue;
++                    }
++                    let mut next = counts;
++                    next[parent] += 1;
++                    next[death] -= 1;
++                    row.push((
++                        index(next[1], next[2]),
++                        (counts[parent] * counts[death]) as f64 / denom,
++                    ));
+                 }
+-                let mut next = counts;
+-                next[parent] += 1;
+-                next[death] -= 1;
+-                transitions.push((
+-                    index(next[1], next[2]),
+-                    (counts[parent] * counts[death]) as f64 / denom,
+-                ));
+             }
++            row
++        })
++        .collect();
++    (states, rows)
++}
++
++fn prepare_moran(n: usize, a0: usize, b0: usize) -> Moran {
++    let (states, rows) = moran_transitions(n);
++    let index = |a: usize, b: usize| a * (n + 1) - a * a.saturating_sub(1) / 2 + b;
++    // Transpose by target. Visiting sources in ascending order keeps every
++    // target's additions in the order the scatter update performed them.
++    let mut offsets = vec![0; states.len() + 1];
++    for &(to, _) in rows.iter().flatten() {
++        offsets[to + 1] += 1;
++    }
++    for i in 1..offsets.len() {
++        offsets[i] += offsets[i - 1];
++    }
++    let mut fill = offsets.clone();
++    let mut incoming = vec![(0, 0.0); offsets[states.len()]];
++    for (from, row) in rows.iter().enumerate() {
++        for &(to, p) in row {
++            incoming[fill[to]] = (from, p);
++            fill[to] += 1;
+         }
+     }
+-    offsets.push(transitions.len());
+     Moran {
+         states,
+         offsets,
+-        transitions,
++        incoming,
+         initial: index(a0, b0),
+     }
+ }
+@@ -391,7 +422,7 @@ fn moran(
+     let Moran {
+         states,
+         offsets,
+-        transitions,
++        incoming,
+         initial,
+     } = topology;
+     // Charge the same logical row visits as the cold construction.
+@@ -402,15 +433,15 @@ fn moran(
+     let mut next = vec![0.0; states.len()];
+     law[*initial] = 1.0;
+     for _ in 0..updates {
+-        next.fill(0.0);
+-        for (&mass, offset) in law.iter().zip(offsets.windows(2)) {
++        // One logical row visit per state, as in the scatter update. A
++        // zero-mass source adds +0.0, which leaves the sum unchanged.
++        for (out, offset) in next.iter_mut().zip(offsets.windows(2)) {
+             work.step()?;
+-            if mass == 0.0 {
+-                continue;
+-            }
+-            for &(to, p) in &transitions[offset[0]..offset[1]] {
+-                next[to] += mass * p;
++            let mut sum = 0.0;
++            for &(from, p) in &incoming[offset[0]..offset[1]] {
++                sum += law[from] * p;
+             }
++            *out = sum;
+         }
+         std::mem::swap(&mut law, &mut next);
+     }
+@@ -429,3 +460,61 @@ fn moran(
+         ),
+     ))
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    /// The scatter update used through 0.2.0.
++    fn scatter(n: usize, a0: usize, b0: usize, updates: usize) -> Vec<f64> {
++        let (states, rows) = moran_transitions(n);
++        let index = |a: usize, b: usize| a * (n + 1) - a * a.saturating_sub(1) / 2 + b;
++        let mut law = vec![0.0; states.len()];
++        let mut next = vec![0.0; states.len()];
++        law[index(a0, b0)] = 1.0;
++        for _ in 0..updates {
++            next.fill(0.0);
++            for (&mass, row) in law.iter().zip(&rows) {
++                if mass == 0.0 {
++                    continue;
++                }
++                for &(to, p) in row {
++                    next[to] += mass * p;
++                }
++            }
++            std::mem::swap(&mut law, &mut next);
++        }
++        law
++    }
++
++    #[test]
++    fn gathered_moran_update_matches_the_scatter_update_bit_for_bit() {
++        let budget = crate::Budget::default();
++        for (n, a0, b0, updates) in [
++            (2, 1, 1, 0),
++            (2, 0, 0, 3),
++            (3, 1, 1, 3),
++            (7, 2, 4, 40),
++            (18, 4, 3, 65),
++            (32, 0, 32, 5),
++            (32, 10, 11, 300),
++        ] {
++            let mut work = crate::Work {
++                budget: &budget,
++                deadline: None,
++                used: 0,
++                monitored: false,
++                metrics_enabled: true,
++            };
++            let (_, metrics) =
++                moran(&prepare_moran(n, a0, b0), n, updates, true, &mut work).unwrap();
++            let law: Vec<f64> =
++                serde_json::from_value(metrics["joint"]["probabilities"].clone()).unwrap();
++            let reference = scatter(n, a0, b0, updates);
++            let bits = |v: &[f64]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
++            assert_eq!(bits(&law), bits(&reference), "{n} {a0} {b0} {updates}");
++            let states = (n + 1) * (n + 2) / 2;
++            assert_eq!(work.used, (states * (updates + 1)) as u64);
++        }
++    }
++}
+-- 
+2.43.0
+

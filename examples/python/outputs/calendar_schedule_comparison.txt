@@ -1,0 +1,13 @@
+schedule       final P(on)  mean P(on)  steps   (on-rate x time = 10 for each)
+constant       0.666666     0.622139    100
+front-loaded   0.147264     0.571903    100
+back-loaded    0.833238     0.434761    100
+pulsed         0.228888     0.572960    100
+
+constant schedule: 0.666666462731786 vs closed form 0.666666462731786
+
+d final P(on) / d on-rate, pulsed schedule:
+  quarter 1: +0.000013
+  quarter 2: +0.000473
+  quarter 3: +0.023666
+  quarter 4: +0.854770

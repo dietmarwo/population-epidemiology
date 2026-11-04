@@ -1,0 +1,45 @@
+From 6d4a7efc838fae500b546882362bc2960c4bbced Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Wed, 4 Nov 2026 02:51:11 +0100
+Subject: [PATCH 07/12] Shorten the unmonitored work-counter path
+
+---
+ src/lib.rs | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/src/lib.rs b/src/lib.rs
+index 12d972f..ac972ad 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -75,9 +75,20 @@ pub struct Work<'a> {
+     budget: &'a Budget,
+     deadline: Option<Instant>,
+     used: u64,
++    monitored: bool,
+ }
+ impl Work<'_> {
++    #[inline]
+     pub fn step(&mut self) -> Result<(), Failure> {
++        if self.used < self.budget.max_steps && !self.monitored {
++            self.used += 1;
++            return Ok(());
++        }
++        self.checked_step()
++    }
++
++    #[cold]
++    fn checked_step(&mut self) -> Result<(), Failure> {
+         if self.budget.cancel_file.as_ref().is_some_and(|p| p.exists()) {
+             return Err(Failure {
+                 status: "cancelled",
+@@ -153,6 +164,7 @@ impl Prepared {
+             budget,
+             deadline,
+             used: 0,
++            monitored: deadline.is_some() || budget.cancel_file.is_some(),
+         };
+         let result = domain::evaluate(&self.model, c, &mut work);
+         let result = result.and_then(|(score, metrics)| {
+-- 
+2.51.1
+

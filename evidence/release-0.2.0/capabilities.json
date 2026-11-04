@@ -1,0 +1,1 @@
+{"batch":true,"models":["sir_via_crn_fsp","finite_neutral_two_mutant_moran","exact_two_state_rate_calendar"],"schema":"population-epidemiology.capabilities/0.1","version":"0.2.0","worker_limit":64}

@@ -1,0 +1,81 @@
+From 6d4dfbdf7f5c1d281596ffa3642328a7d85de471 Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Wed, 4 Nov 2026 02:50:50 +0100
+Subject: [PATCH 06/12] Borrow candidate identifiers through serialization
+
+---
+ src/lib.rs | 23 ++++++++++++++++-------
+ 1 file changed, 16 insertions(+), 7 deletions(-)
+
+diff --git a/src/lib.rs b/src/lib.rs
+index 386179a..12d972f 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -105,8 +105,8 @@ impl Work<'_> {
+ }
+ 
+ #[derive(Serialize)]
+-struct Record {
+-    id: String,
++struct Record<'a> {
++    id: &'a str,
+     status: &'static str,
+     steps: u64,
+     score: Option<f64>,
+@@ -117,7 +117,7 @@ struct Record {
+ #[derive(Serialize)]
+ struct Batch<'a> {
+     model_sha256: &'a str,
+-    records: Vec<Record>,
++    records: Vec<Record<'a>>,
+     schema: &'static str,
+     version: &'static str,
+ }
+@@ -143,7 +143,12 @@ impl Prepared {
+         serde_json::to_string(&self.evaluate(&candidates, budget)?).map_err(|e| e.to_string())
+     }
+ 
+-    fn record(&self, c: &Candidate, budget: &Budget, deadline: Option<Instant>) -> Record {
++    fn record<'a>(
++        &self,
++        c: &'a Candidate,
++        budget: &Budget,
++        deadline: Option<Instant>,
++    ) -> Record<'a> {
+         let mut work = Work {
+             budget,
+             deadline,
+@@ -159,7 +164,7 @@ impl Prepared {
+         });
+         match result {
+             Ok((score, metrics)) => Record {
+-                id: c.id.clone(),
++                id: &c.id,
+                 status: "complete",
+                 steps: work.used,
+                 score: Some(score),
+@@ -167,7 +172,7 @@ impl Prepared {
+                 detail: None,
+             },
+             Err(e) => Record {
+-                id: c.id.clone(),
++                id: &c.id,
+                 status: e.status,
+                 steps: work.used,
+                 score: None,
+@@ -177,7 +182,11 @@ impl Prepared {
+         }
+     }
+ 
+-    fn evaluate(&self, candidates: &[Candidate], budget: Budget) -> Result<Batch<'_>, String> {
++    fn evaluate<'a>(
++        &'a self,
++        candidates: &'a [Candidate],
++        budget: Budget,
++    ) -> Result<Batch<'a>, String> {
+         if !(1..=64).contains(&budget.workers)
+             || !(1..=100_000_000).contains(&budget.max_steps)
+             || budget.wall_ms.is_some_and(|n| n == 0 || n > 86_400_000)
+-- 
+2.51.1
+
