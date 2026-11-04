@@ -30,11 +30,12 @@ pub struct Projection {
     /// Target state of each state's infection and recovery transition.
     infection: Vec<Option<usize>>,
     recovery: Vec<Option<usize>>,
-    /// Column-ordered generator: incoming entries of each target in
-    /// ascending source order, with the diagonal at its own position and the
-    /// escaping sink last (it has no incoming edges here).
-    start: Vec<usize>,
-    entries: Vec<(usize, Entry)>,
+    /// Column-ordered generator: the incoming entries of each target state
+    /// in ascending source order, with the diagonal at its own position,
+    /// padded after the real entries to three slots. The escaping sink has
+    /// no incoming edges here.
+    sources: Vec<[usize; 3]>,
+    kinds: Vec<[Entry; 3]>,
     edges: usize,
     times: Vec<f64>,
     tolerance: f64,
@@ -45,6 +46,8 @@ enum Entry {
     Diagonal,
     Infection,
     Recovery,
+    /// A zero weight after the real entries of a column.
+    Padding,
 }
 
 /// How much of a solution to record.
@@ -131,14 +134,31 @@ impl Projection {
                 fill[target] += 1;
             }
         }
+        // A column holds its diagonal plus at most one infection source
+        // (S + 1, I - 1) and one recovery source (I + 1, R - 1).
+        assert_eq!(start[n], start[n + 1], "no transition reaches the sink");
+        let mut sources = Vec::with_capacity(n);
+        let mut kinds = Vec::with_capacity(n);
+        for (c, bounds) in start[..=n].windows(2).enumerate() {
+            let column = &entries[bounds[0]..bounds[1]];
+            assert!(column.len() <= 3, "SIR columns have at most three entries");
+            let mut slot_sources = [c; 3];
+            let mut slot_kinds = [Entry::Padding; 3];
+            for (k, &(source, kind)) in column.iter().enumerate() {
+                slot_sources[k] = source;
+                slot_kinds[k] = kind;
+            }
+            sources.push(slot_sources);
+            kinds.push(slot_kinds);
+        }
         Self {
             susceptible: states.iter().map(|x| x[0] as f64).collect(),
             infected: states.iter().map(|x| x[1] as f64).collect(),
             infection,
             recovery,
-            start,
+            sources,
+            kinds,
             edges: entries.len() - n,
-            entries,
             times: times.to_vec(),
             tolerance,
             counts: states,
@@ -251,16 +271,17 @@ impl Projection {
                 }
             }
         }
-        let columns: Vec<(usize, f64)> = self
-            .entries
+        let weights: Vec<[f64; 3]> = self
+            .kinds
             .iter()
-            .map(|&(source, kind)| {
-                let weight = match kind {
-                    Entry::Diagonal => diagonal[source],
-                    Entry::Infection => infection_rate[source],
-                    Entry::Recovery => recovery_rate[source],
-                };
-                (source, weight)
+            .zip(&self.sources)
+            .map(|(kinds, sources)| {
+                [0, 1, 2].map(|k| match kinds[k] {
+                    Entry::Diagonal => diagonal[sources[k]],
+                    Entry::Infection => infection_rate[sources[k]],
+                    Entry::Recovery => recovery_rate[sources[k]],
+                    Entry::Padding => 0.0,
+                })
             })
             .collect();
         // Discovery visits every state and every reaction once.
@@ -302,8 +323,8 @@ impl Projection {
                             break;
                         }
                         multiply_accumulate(
-                            &self.start,
-                            &columns,
+                            &self.sources,
+                            &weights,
                             &term,
                             &mut next,
                             &mut result,
@@ -391,28 +412,32 @@ fn omitted_weight(first_weight: f64, mu: f64, first: u64) -> f64 {
 
 /// One series term, `next = term · P`, with the sink (index n) keeping its
 /// mass, fused with `result += weight * next`, as in the vendored solver.
+/// The vendored solver starts each column at 0.0 and adds its entries in
+/// ascending source order; `0.0 + x` is `x` and a padded slot adds +0.0 to a
+/// non-negative sum, so each column's value is bitwise unchanged.
 fn multiply_accumulate(
-    start: &[usize],
-    entries: &[(usize, f64)],
+    sources: &[[usize; 3]],
+    weights: &[[f64; 3]],
     term: &[f64],
     next: &mut [f64],
     result: &mut [f64],
     weight: f64,
 ) {
-    let n = start.len() - 2;
-    for (c, ((out, total), bounds)) in next
+    let n = sources.len();
+    for (((out, total), source), w) in next[..n]
         .iter_mut()
-        .zip(result.iter_mut())
-        .zip(start.windows(2))
-        .enumerate()
+        .zip(&mut result[..n])
+        .zip(sources)
+        .zip(weights)
     {
-        let mut sum = if c == n { term[n] } else { 0.0 };
-        for &(i, rate) in &entries[bounds[0]..bounds[1]] {
-            sum += term[i] * rate;
-        }
+        let mut sum = term[source[0]] * w[0];
+        sum += term[source[1]] * w[1];
+        sum += term[source[2]] * w[2];
         *out = sum;
         *total += weight * sum;
     }
+    next[n] = term[n];
+    result[n] += weight * term[n];
 }
 
 #[cfg(test)]

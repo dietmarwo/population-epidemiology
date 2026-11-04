@@ -218,3 +218,29 @@ transitions and 65 updates, about 92 us per case.
   byte, traced and untraced, with and without holdout points.
 - Result: 1.090 ms before, 0.817 ms after, 1.33x (`round07-trace.json`).
   Kept. The traced CLI request still prints the 0.2.0 bytes.
+
+## Round 8: fixed-width SIR generator columns
+
+- Change: every SIR generator column has at most three entries (its
+  diagonal, the infection source and the recovery source). Store each
+  column as three (source, kind) slots in ascending source order, padded
+  after the real entries with zero weights, and handle the escaping sink
+  after the loop. The product then has no inner loop bounds or per-column
+  sink branch. A padded slot adds +0.0 to a non-negative sum, and the
+  first real product equals `0.0 + product`, so every column's additions
+  are unchanged.
+- Workload: `serial` through the matrix API, round 7 against this round.
+- Expected effect: 1.2x to 1.4x on the uniformization kernel, which is
+  most of a lean SIR candidate.
+- Decision: the brief's rule. The bit-for-bit projection tests against
+  the vendored solver must keep passing.
+- Result: 3.025 ms before, 1.532 ms after, 1.97x
+  (`round08-matrix-serial.json`). Kept. The projection tests still match
+  the vendored solver bit for bit.
+- Noise note (diagnostic only, not a decision): the round 7 "before"
+  median was higher than round 2's "after" median, so rounds 2 to 7 were
+  re-paired on matrix serial with 5 to 7 samples. Two consecutive 7-sample
+  pairs of the same round 4 and round 5 binaries gave 0.78x and 1.07x, and
+  single runs of one binary ranged from 2.4 to 4.1 ms. Absolute times on
+  this shared 2-vCPU host drift in phases, so only within-pair ratios are
+  used.
