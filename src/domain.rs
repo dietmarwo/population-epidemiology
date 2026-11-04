@@ -1,3 +1,4 @@
+use crate::sir_fsp::{self, Projection, Solution};
 use crate::{Evaluation, Work, infeasible, invalid};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -41,6 +42,8 @@ pub struct Model {
     input: Input,
     moran: Option<Moran>,
     calendar: Vec<[f64; 2]>,
+    /// Prepared SIR projection, absent when CRN-craft rejects the documents.
+    sir: Option<Projection>,
 }
 struct Moran {
     states: Vec<(usize, usize)>,
@@ -52,6 +55,7 @@ struct Moran {
 pub fn prepare(input: Input) -> Result<Model, String> {
     let mut moran = None;
     let mut calendar = Vec::new();
+    let mut sir = None;
     match &input {
         Input::Sir {
             susceptible,
@@ -79,6 +83,16 @@ pub fn prepare(input: Input) -> Result<Model, String> {
                 && (1e-13..=1e-5).contains(tolerance))
             {
                 return Err("invalid SIR population, time grid, observations or tolerance".into());
+            }
+            // Positive normal rates leave CRN-craft's validation independent of
+            // their values, so one checked binding qualifies the structure.
+            let initial = [*susceptible, *infected, *recovered];
+            let (model, run) = sir_documents(initial, sample_times, *tolerance, 1.0, 1.0, None);
+            if crn_craft::check_bytes(model.as_bytes(), Some(run.as_bytes())).valid {
+                let projection = Projection::new(initial, sample_times, *tolerance);
+                if projection.output_bound() <= u128::from(sir_fsp::MAX_OUTPUT_BYTES) {
+                    sir = Some(projection);
+                }
             }
         }
         Input::Moran {
@@ -130,7 +144,46 @@ pub fn prepare(input: Input) -> Result<Model, String> {
         input,
         moran,
         calendar,
+        sir,
     })
+}
+
+/// The CRN-craft model and FSP run documents for one SIR rate binding.
+pub(crate) fn sir_documents(
+    [susceptible, infected, recovered]: [u32; 3],
+    sample_times: &[f64],
+    tolerance: f64,
+    infection: f64,
+    gamma: f64,
+    wall: Option<f64>,
+) -> (String, String) {
+    let n = susceptible + infected + recovered;
+    let model = json!({"schema":"crn-craft.model/0.1","name":"small_sir","convention":"stochastic_counts","omega":1.0,
+        "parameters":{"infection":infection,"gamma":gamma},
+        "species":[{"name":"S","initial_count":susceptible},{"name":"I","initial_count":infected},{"name":"R","initial_count":recovered}],
+        "reactions":[{"name":"infection","reactants":{"S":1,"I":1},"products":{"I":2},
+            "rate":{"kind":"mass_action","coefficient":"infection"}},
+            {"name":"recovery","reactants":{"I":1},"products":{"R":1},
+            "rate":{"kind":"mass_action","coefficient":"gamma"}}]});
+    let bytes = model.to_string();
+    let mut run = json!({"schema":"crn-craft.run/0.1","model":{"path":"sir.model.json","sha256":crn_craft::sha256(bytes.as_bytes())},
+        "method":{"kind":"fsp","bounds":{"S":n,"I":n,"R":n},"max_states":(n+1)*(n+2)/2,"tolerance":tolerance},
+        "time":{"end":sample_times.last(),"save_times":sample_times},
+        "outputs":{"statistics":["mean","variance"],"keep_trajectories":0},
+        "budget":{"threads":1,"max_output_bytes":sir_fsp::MAX_OUTPUT_BYTES}});
+    if let Some(wall) = wall {
+        run["budget"]["wall_time_s"] = json!(wall);
+    }
+    (bytes, run.to_string())
+}
+
+/// Means, diagnostics, work and provenance of one solved SIR binding.
+struct Solved {
+    solution: Solution,
+    model_sha256: Option<String>,
+    run_sha256: Option<String>,
+    certified: bool,
+    trace: Option<crn_craft::fsp::FspResult>,
 }
 
 pub fn evaluate(model: &Model, parameters: &[f64], trace: bool, work: &mut Work<'_>) -> Evaluation {
@@ -155,46 +208,87 @@ pub fn evaluate(model: &Model, parameters: &[f64], trace: bool, work: &mut Work<
                 work.step()?;
             }
             let n = susceptible + infected + recovered;
-            let model = json!({"schema":"crn-craft.model/0.1","name":"small_sir","convention":"stochastic_counts","omega":1.0,
-                "parameters":{"infection":beta/f64::from(n),"gamma":gamma},
-                "species":[{"name":"S","initial_count":susceptible},{"name":"I","initial_count":infected},{"name":"R","initial_count":recovered}],
-                "reactions":[{"name":"infection","reactants":{"S":1,"I":1},"products":{"I":2},
-                    "rate":{"kind":"mass_action","coefficient":"infection"}},
-                    {"name":"recovery","reactants":{"I":1},"products":{"R":1},
-                    "rate":{"kind":"mass_action","coefficient":"gamma"}}]});
-            let bytes = model.to_string();
-            let wall = work.deadline.map(|d| {
-                d.saturating_duration_since(std::time::Instant::now())
-                    .as_secs_f64()
-                    .max(1e-6)
-            });
-            let mut run = json!({"schema":"crn-craft.run/0.1","model":{"path":"sir.model.json","sha256":crn_craft::sha256(bytes.as_bytes())},
-                "method":{"kind":"fsp","bounds":{"S":n,"I":n,"R":n},"max_states":(n+1)*(n+2)/2,"tolerance":tolerance},
-                "time":{"end":sample_times.last(),"save_times":sample_times},
-                "outputs":{"statistics":["mean","variance"],"keep_trajectories":0},
-                "budget":{"threads":1,"max_output_bytes":8_388_608}});
-            if let Some(wall) = wall {
-                run["budget"]["wall_time_s"] = json!(wall);
-            }
-            let mut control = crn_craft::simulation::Control::default();
-            control.cancel_file = work.budget.cancel_file.clone();
-            let solved =
-                crn_craft::fsp::solve(bytes.as_bytes(), run.to_string().as_bytes(), &control);
+            let initial = [*susceptible, *infected, *recovered];
+            let infection = beta / f64::from(n);
+            let prepared = model
+                .sir
+                .as_ref()
+                .filter(|_| !work.monitored && !trace)
+                .and_then(|p| p.solve(infection, gamma, work.metrics_enabled));
+            let solved = match prepared {
+                Some(solution) => {
+                    let (model_sha256, run_sha256) = if work.metrics_enabled {
+                        let (model, run) = sir_documents(
+                            initial,
+                            sample_times,
+                            *tolerance,
+                            infection,
+                            gamma,
+                            None,
+                        );
+                        (
+                            Some(crn_craft::sha256(model.as_bytes())),
+                            Some(crn_craft::sha256(run.as_bytes())),
+                        )
+                    } else {
+                        (None, None)
+                    };
+                    Ok(Solved {
+                        solution,
+                        model_sha256,
+                        run_sha256,
+                        // The vendored solver never certifies its numerical error.
+                        certified: false,
+                        trace: None,
+                    })
+                }
+                None => {
+                    let wall = work.deadline.map(|d| {
+                        d.saturating_duration_since(std::time::Instant::now())
+                            .as_secs_f64()
+                            .max(1e-6)
+                    });
+                    let (bytes, run) =
+                        sir_documents(initial, sample_times, *tolerance, infection, gamma, wall);
+                    let mut control = crn_craft::simulation::Control::default();
+                    control.cancel_file = work.budget.cancel_file.clone();
+                    crn_craft::fsp::solve(bytes.as_bytes(), run.as_bytes(), &control).map(|out| {
+                        let solution = Solution {
+                            means: out
+                                .snapshots
+                                .iter()
+                                .map(|s| s.projected_first_moment[1])
+                                .collect(),
+                            errors: out
+                                .snapshots
+                                .iter()
+                                .map(|s| {
+                                    [
+                                        s.physical_leakage_estimate,
+                                        s.series_tail_upper_bound,
+                                        s.mass_defect,
+                                        s.roundoff_mass_residual,
+                                    ]
+                                })
+                                .collect(),
+                            work: out.work,
+                        };
+                        Solved {
+                            solution,
+                            model_sha256: work.metrics_enabled.then(|| out.model_sha256.clone()),
+                            run_sha256: work.metrics_enabled.then(|| out.run_sha256.clone()),
+                            certified: out.numerical_error_certified,
+                            trace: trace.then_some(out),
+                        }
+                    })
+                }
+            };
             work.step()?;
-            let out =
+            let solved =
                 solved.map_err(|d| infeasible(serde_json::to_string(&d).unwrap_or_default()))?;
             let mut loss = [0.0; 2];
             let mut count = [0; 2];
-            let mut means = Vec::new();
-            let mut errors = Vec::new();
-            for (i, s) in out.snapshots.iter().enumerate() {
-                let mean = s.projected_first_moment[1];
-                if work.metrics_enabled {
-                    means.push(mean);
-                    errors.push(json!({"physical_leakage":s.physical_leakage_estimate,
-                    "series_tail_upper_bound":s.series_tail_upper_bound,"mass_defect":s.mass_defect,
-                    "roundoff_mass_residual":s.roundoff_mass_residual}));
-                }
+            for (i, &mean) in solved.solution.means.iter().enumerate() {
                 if let Some(o) = observations[i] {
                     let k = usize::from(i >= *train_count);
                     loss[k] += (mean - o).powi(2);
@@ -203,15 +297,23 @@ pub fn evaluate(model: &Model, parameters: &[f64], trace: bool, work: &mut Work<
             }
             let train = loss[0] / f64::from(count[0]);
             let holdout = (count[1] > 0).then(|| loss[1] / f64::from(count[1]));
-            let fsp_work = out.work;
-            let model_hash = work.metrics_enabled.then(|| out.model_sha256.clone());
-            let run_hash = work.metrics_enabled.then(|| out.run_sha256.clone());
-            let certified = out.numerical_error_certified;
             Ok((
                 train,
-                work.metrics(|| json!({"infected_means":means,"holdout_mse":holdout,"error":errors,
-                "fsp_work":fsp_work,"numerical_error_certified":certified,"crn_model_sha256":model_hash,
-                "crn_run_sha256":run_hash,"fsp":trace.then_some(out)})),
+                work.metrics(|| {
+                    let errors: Vec<_> = solved
+                        .solution
+                        .errors
+                        .iter()
+                        .map(|e| {
+                            json!({"physical_leakage":e[0],"series_tail_upper_bound":e[1],
+                                   "mass_defect":e[2],"roundoff_mass_residual":e[3]})
+                        })
+                        .collect();
+                    json!({"infected_means":solved.solution.means,"holdout_mse":holdout,"error":errors,
+                    "fsp_work":solved.solution.work,"numerical_error_certified":solved.certified,
+                    "crn_model_sha256":solved.model_sha256,"crn_run_sha256":solved.run_sha256,
+                    "fsp":solved.trace})
+                }),
             ))
         }
         Input::Moran {

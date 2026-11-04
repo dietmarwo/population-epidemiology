@@ -1,4 +1,5 @@
 mod domain;
+mod sir_fsp;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json, value::RawValue};
@@ -648,6 +649,61 @@ mod tests {
             rows.iter()
                 .all(|r| r.status == "invalid" && r.score.is_none())
         );
+    }
+
+    #[test]
+    fn prepared_sir_records_equal_the_vendored_solver_records() {
+        // A cancel-file budget whose file never exists routes every SIR
+        // candidate through the vendored solver with identical documents.
+        let absent = std::env::temp_dir().join(format!("pe-absent-{}", std::process::id()));
+        let reference = json!({"cancel_file": absent}).to_string();
+        let mut example = fixture();
+        let models = [
+            example["model"].clone(),
+            json!({"kind":"sir","susceptible":4,"infected":1,"recovered":0,
+                   "sample_times":[0.0,0.5,4.0],"observations":[1.0,null,0.5],
+                   "train_count":2,"tolerance":1e-13}),
+            json!({"kind":"sir","susceptible":3,"infected":0,"recovered":1,
+                   "sample_times":[0.0,2.0],"observations":[0.0,0.0],
+                   "train_count":1,"tolerance":1e-9}),
+            // CRN-craft requires the save grid to start at 0.
+            json!({"kind":"sir","susceptible":3,"infected":2,"recovered":1,
+                   "sample_times":[1.0,2.0],"observations":[1.0,1.0],
+                   "train_count":1,"tolerance":1e-9}),
+        ];
+        let candidates = json!([
+            {"id":"fit","parameters":[0.7,0.4]},
+            {"id":"fast","parameters":[5.0,5.0]},
+            {"id":"zero-beta","parameters":[0.0,0.4]},
+            {"id":"zero-gamma","parameters":[0.7,0.0]},
+            {"id":"tiny","parameters":[1e-310,0.4]},
+            {"id":"range","parameters":[5.5,0.4]},
+        ])
+        .to_string();
+        for model in models {
+            example["model"] = model;
+            let prepared = Prepared::new(&example["model"].to_string()).unwrap();
+            for metrics in [true, false] {
+                let run = |budget: &str| {
+                    if metrics {
+                        prepared.evaluate_json(&candidates, budget).unwrap()
+                    } else {
+                        prepared.scores_json(&candidates, budget).unwrap()
+                    }
+                };
+                assert_eq!(run("{}"), run(&reference));
+                assert_eq!(run(r#"{"workers":3}"#), run(&reference));
+            }
+        }
+        let rejected = Prepared::new(
+            &json!({"kind":"sir","susceptible":3,"infected":2,"recovered":1,
+                    "sample_times":[1.0,2.0],"observations":[1.0,1.0],
+                    "train_count":1,"tolerance":1e-9})
+            .to_string(),
+        )
+        .unwrap();
+        let rows = rejected.score_matrix(1, &[0.7, 0.4], "{}").unwrap();
+        assert_eq!(rows[0].status, "infeasible");
     }
 
     #[test]

@@ -117,6 +117,7 @@ name = "population-epidemiology"
 version = "0.2.0"
 dependencies = [
  "crn-craft",
+ "libm",
  "pyo3",
  "serde",
  "serde_json",

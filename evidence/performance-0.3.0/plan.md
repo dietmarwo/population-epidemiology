@@ -57,3 +57,29 @@ The JSON API boundary is about 1 us per candidate.
   comes from not decoding, holding and encoding 96 candidate records
   around the allocation-heavy SIR evaluations; host noise in diagnostic
   reruns was about +/-5%.
+
+## Round 2: prepared SIR projection
+
+- Change: for SIR, build the reachable states, the generator edges and
+  their column order once in `Prepared::new` (a new `src/sir_fsp.rs`). A
+  candidate binds its two rates to the prepared structure and runs the
+  same uniformization arithmetic as `crn_craft::fsp::solve`, in the same
+  order, so means, diagnostics and the FSP work count are bit-identical.
+  Traced candidates, monitored budgets (deadline or cancel file),
+  non-normal rates and every runtime limit fall back to the vendored
+  solver, which then produces the identical result or diagnostic. Model
+  inputs that CRN-craft rejects (for example a save grid not starting at
+  0) disable the prepared path at preparation. Full records still build
+  the CRN model and run documents to report their SHA-256 values.
+- Workload: `serial` through the matrix API (round 1 binary, matrix,
+  against this round, matrix).
+- Expected effect: per-candidate cost falls from about 140 us to about
+  25 us, roughly 4x to 6x.
+- Decision: the brief's rule (at least 1.03x and the paired check on all
+  workloads). Results should be bit-identical; the independent domain
+  validation runs for this round anyway because the FSP arithmetic moves
+  into this crate.
+- Result: 16.029 ms before, 2.212 ms after, 7.25x
+  (`round02-matrix-serial.json`). Kept. `validation/validate.py` passed
+  against the round 2 CLI and reproduced `models/example.json` and
+  `evidence/validation.json` exactly.
