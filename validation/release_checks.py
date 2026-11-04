@@ -2,6 +2,7 @@
 
 import importlib
 import json
+import math
 from pathlib import Path
 import re
 import sys
@@ -23,6 +24,22 @@ with TemporaryDirectory() as tmp:
         assert lean["records"] == [r | {"metrics": None} for r in full["records"]]
         if "cancel_file" in budget:
             assert lean["records"][0]["status"] == "cancelled"
+        # The typed matrix API agrees with the lean records row by row.
+        for candidate, row in zip(candidates, lean["records"], strict=True):
+            scores, statuses, steps = prepared.score_matrix([candidate["parameters"]], **budget)
+            assert (statuses, steps) == ([row["status"]], [row["steps"]]), (budget, row)
+            if row["status"] == "complete":
+                assert scores == [row["score"]], (budget, row)
+            else:
+                assert math.isnan(scores[0]), (budget, row)
+        rows = [example["parameters"], [x * 1.1 for x in example["parameters"]],
+                [9.0] * len(example["parameters"])]
+        listed = prepared.scores([{"id": str(i), "parameters": r} for i, r in enumerate(rows)],
+                                 **budget)["records"]
+        scores, statuses, steps = prepared.score_matrix(rows, **budget)
+        assert statuses == [r["status"] for r in listed] and steps == [r["steps"] for r in listed]
+        assert all(s == r["score"] if r["status"] == "complete" else math.isnan(s)
+                   for s, r in zip(scores, listed, strict=True))
     if module == "population_epidemiology":
         calendar = package.Prepared({"kind": "calendar", "initial_on_probability": 0.5,
                                      "segments": [{"duration": 1, "on_rate": 0, "off_rate": 0}] * 3})
@@ -54,6 +71,19 @@ except ValueError:
     pass
 else:
     raise AssertionError("scores accepted a traced candidate")
+try:
+    prepared.score_matrix([example["parameters"], example["parameters"][:1]])
+except ValueError:
+    pass
+else:
+    raise AssertionError("score_matrix accepted ragged rows")
+try:
+    import numpy
+except ImportError:
+    numpy = None
+if numpy is not None:
+    array = numpy.array([example["parameters"]] * 3)
+    assert prepared.score_matrix(array) == prepared.score_matrix(array.tolist())
 
 snippets = re.findall(r"^```python\n(.*?)^```", Path(tutorial).read_text(), re.M | re.S)
 assert len(snippets) >= 4
@@ -61,4 +91,5 @@ namespace = {}
 for i, snippet in enumerate(snippets, 1):
     exec(compile(snippet, f"tutorial-{i}", "exec"), namespace)
 print(json.dumps({"status": "passed", "tutorial_python_blocks": len(snippets),
-                  "lean_api_and_budget_parity": True}))
+                  "lean_api_and_budget_parity": True, "matrix_api_parity": True,
+                  "numpy_matrix_input": numpy is not None}))

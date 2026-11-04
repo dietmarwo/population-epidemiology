@@ -1,4 +1,4 @@
-use crate::{Candidate, Evaluation, Work, infeasible, invalid};
+use crate::{Evaluation, Work, infeasible, invalid};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -133,7 +133,7 @@ pub fn prepare(input: Input) -> Result<Model, String> {
     })
 }
 
-pub fn evaluate(model: &Model, c: &Candidate, work: &mut Work<'_>) -> Evaluation {
+pub fn evaluate(model: &Model, parameters: &[f64], trace: bool, work: &mut Work<'_>) -> Evaluation {
     match &model.input {
         Input::Sir {
             susceptible,
@@ -144,7 +144,7 @@ pub fn evaluate(model: &Model, c: &Candidate, work: &mut Work<'_>) -> Evaluation
             train_count,
             tolerance,
         } => {
-            let &[beta, gamma] = c.parameters.as_slice() else {
+            let &[beta, gamma] = parameters else {
                 return Err(invalid("expected beta and gamma per time unit"));
             };
             if ![beta, gamma].iter().all(|v| (0.0..=5.0).contains(v)) {
@@ -211,7 +211,7 @@ pub fn evaluate(model: &Model, c: &Candidate, work: &mut Work<'_>) -> Evaluation
                 train,
                 work.metrics(|| json!({"infected_means":means,"holdout_mse":holdout,"error":errors,
                 "fsp_work":fsp_work,"numerical_error_certified":certified,"crn_model_sha256":model_hash,
-                "crn_run_sha256":run_hash,"fsp":c.trace.then_some(out)})),
+                "crn_run_sha256":run_hash,"fsp":trace.then_some(out)})),
             ))
         }
         Input::Moran {
@@ -219,19 +219,19 @@ pub fn evaluate(model: &Model, c: &Candidate, work: &mut Work<'_>) -> Evaluation
             updates,
             ..
         } => {
-            if !c.parameters.is_empty() {
+            if !parameters.is_empty() {
                 return Err(invalid("neutral Moran has no candidate parameters"));
             }
             moran(
                 model.moran.as_ref().expect("prepared transitions"),
                 *population,
                 *updates,
-                c.trace,
+                trace,
                 work,
             )
         }
         Input::Calendar { .. } => {
-            if !c.parameters.is_empty() {
+            if !parameters.is_empty() {
                 return Err(invalid("calendar rates come from the model"));
             }
             let boundaries = &model.calendar;

@@ -1,6 +1,11 @@
-use population_epidemiology::Prepared;
+use population_epidemiology::{MatrixScore, Prepared};
 use serde_json::{Value, json};
 use std::{hint::black_box, time::Instant};
+
+enum Output {
+    Json(String),
+    Matrix(Vec<MatrixScore>),
+}
 
 fn main() {
     let mut args = std::env::args().skip(1);
@@ -39,20 +44,59 @@ fn main() {
             json!({"id": format!("candidate-{i:04}"), "parameters": values, "trace": traced})
         })
         .collect();
+    let rows: Vec<Vec<f64>> = candidates
+        .iter()
+        .map(|c| serde_json::from_value(c["parameters"].clone()).unwrap())
+        .collect();
+    let flat = rows.concat();
     let candidates = serde_json::to_string(&candidates).unwrap();
     let budget = json!({"workers":workers}).to_string();
     let evaluator = Prepared::new(&model.to_string()).unwrap();
     let lean = std::env::var_os("CRAFT_SCORES").is_some();
-    let evaluate = || {
-        if lean {
-            evaluator.scores_json(&candidates, &budget)
+    // CRAFT_MATRIX selects the typed score-matrix API for untraced workloads.
+    let matrix = std::env::var_os("CRAFT_MATRIX").is_some();
+    assert!(
+        !(matrix && traced),
+        "the matrix API evaluates untraced candidates"
+    );
+    let evaluate = || -> Result<Output, String> {
+        if matrix {
+            evaluator
+                .score_matrix(count, &flat, &budget)
+                .map(Output::Matrix)
+        } else if lean {
+            evaluator
+                .scores_json(&candidates, &budget)
+                .map(Output::Json)
         } else {
-            evaluator.evaluate_json(&candidates, &budget)
+            evaluator
+                .evaluate_json(&candidates, &budget)
+                .map(Output::Json)
         }
     };
     let first = evaluate().unwrap();
     if args.next().as_deref() == Some("probe") {
-        println!("{first}");
+        match first {
+            Output::Json(text) => println!("{text}"),
+            // Records comparable to `scores_json`, without metrics or detail.
+            Output::Matrix(scores) => {
+                let records: Vec<_> = scores
+                    .iter()
+                    .enumerate()
+                    .map(|(i, row)| {
+                        json!({"id": format!("candidate-{i:04}"), "status": row.status,
+                               "steps": row.steps, "score": row.score,
+                               "metrics": null, "detail": null})
+                    })
+                    .collect();
+                println!(
+                    "{}",
+                    json!({"model_sha256": evaluator.model_sha256(), "records": records,
+                           "schema": "population-epidemiology.result/0.1",
+                           "version": env!("CARGO_PKG_VERSION")})
+                );
+            }
+        }
         return;
     }
     black_box(first);
