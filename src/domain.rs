@@ -425,18 +425,27 @@ fn moran(
         incoming,
         initial,
     } = topology;
-    // Charge the same logical row visits as the cold construction.
-    for _ in states {
-        work.step()?;
+    // Charge the same logical row visits as the cold construction and one
+    // row visit per state and update, as in the scatter update. Without a
+    // deadline or cancel file, the work limit is the only possible stop, so
+    // charging every visit up front gives the same status and step count.
+    let monitored = work.monitored;
+    if monitored {
+        for _ in states {
+            work.step()?;
+        }
+    } else {
+        work.advance(states.len() as u64 * (updates as u64 + 1))?;
     }
     let mut law = vec![0.0; states.len()];
     let mut next = vec![0.0; states.len()];
     law[*initial] = 1.0;
     for _ in 0..updates {
-        // One logical row visit per state, as in the scatter update. A
-        // zero-mass source adds +0.0, which leaves the sum unchanged.
+        // A zero-mass source adds +0.0, which leaves the sum unchanged.
         for (out, offset) in next.iter_mut().zip(offsets.windows(2)) {
-            work.step()?;
+            if monitored {
+                work.step()?;
+            }
             let mut sum = 0.0;
             for &(from, p) in &incoming[offset[0]..offset[1]] {
                 sum += law[from] * p;

@@ -119,3 +119,22 @@ transitions and 65 updates, about 92 us per case.
 - Result: 4.432 ms before, 3.394 ms after, 1.31x (`round03-domain.json`).
   Kept. The unit test confirms bit-identical laws; `validate.py` also
   passed.
+
+## Round 4: charge unmonitored Moran row visits in bulk
+
+- Change: without a deadline or cancel file, charge all
+  `states x (updates + 1)` logical row visits with one `Work::advance`
+  before the recurrence, and drop the per-row step from the inner loop.
+  Without monitoring, the only step outcome is the work limit, so the
+  status, detail and step count are the same as charging the visits one
+  at a time; a budget-limited candidate now stops before computing. Monitored budgets keep the
+  interleaved per-row checks.
+- Workload: lean `domain` (scores on both sides), round 3 against this
+  round.
+- Expected effect: about 12,350 step calls per case out of about 70 us,
+  roughly 1.1x to 1.2x.
+- Decision: the brief's rule. Results are bit-identical; a unit test
+  compares unmonitored and monitored records over a range of
+  `max_steps` values around the limit.
+- Result: 3.292 ms before, 3.051 ms after, 1.08x
+  (`round04-lean-domain.json`). Kept.

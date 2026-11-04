@@ -707,6 +707,33 @@ mod tests {
     }
 
     #[test]
+    fn bulk_moran_charges_match_per_row_charges_at_every_limit() {
+        let model = json!({"kind":"moran","population":4,"mutant_a":1,"mutant_b":2,"updates":6});
+        let prepared = Prepared::new(&model.to_string()).unwrap();
+        let candidates = json!([{"id":"m","parameters":[]}]).to_string();
+        let absent = std::env::temp_dir().join(format!("pe-moran-absent-{}", std::process::id()));
+        // 15 states, charged once for construction and once per update.
+        let total = 15 * 7;
+        for max_steps in [1, 14, 15, 16, 29, 30, 31, total - 1, total, total + 1] {
+            let unmonitored = json!({"max_steps": max_steps}).to_string();
+            let monitored = json!({"max_steps": max_steps, "cancel_file": absent}).to_string();
+            let record = prepared.evaluate_json(&candidates, &unmonitored).unwrap();
+            assert_eq!(
+                record,
+                prepared.evaluate_json(&candidates, &monitored).unwrap()
+            );
+            let row: Value = serde_json::from_str(&record).unwrap();
+            let expected = if max_steps >= total {
+                "complete"
+            } else {
+                "work_limit"
+            };
+            assert_eq!(row["records"][0]["status"], expected);
+            assert_eq!(row["records"][0]["steps"], max_steps.min(total));
+        }
+    }
+
+    #[test]
     fn model_and_candidate_validation_are_independent() {
         let mut example = fixture();
         example["model"]["unexpected"] = json!(true);
