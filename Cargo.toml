@@ -3,8 +3,11 @@ name = "population-epidemiology"
 version = "0.3.0"
 edition = "2024"
 rust-version = "1.88"
-description = "Bounded population-epidemiology research evaluator"
+description = "Stochastic population models: fixed-population SIR via finite state projection, neutral Moran drift and two-state rate calendars"
 license = "MIT"
+repository = "https://github.com/dietmarwo/population-epidemiology"
+keywords = ["epidemiology", "sir-model", "moran-process", "stochastic", "simulation"]
+categories = ["science", "simulation"]
 # Release artifacts, patch series and timing evidence stay out of the source distribution.
 exclude = [
   "/packages/",
