@@ -12,6 +12,7 @@ exclude = [
   "/evidence/performance-0.3.0/",
   "/evidence/release-*/",
   "/SHA256SUMS",
+  "/docs/images/",
 ]
 
 [lib]
