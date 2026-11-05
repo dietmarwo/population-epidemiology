@@ -1,3 +1,5 @@
+![population-epidemiology — stochastic population models](docs/images/banner.png)
+
 # population-epidemiology 0.3.0
 
 A bounded research evaluator for small stochastic population models: a
