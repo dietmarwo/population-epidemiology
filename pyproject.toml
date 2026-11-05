@@ -6,7 +6,11 @@ build-backend = "maturin"
 name = "population-epidemiology"
 version = "0.3.0"
 requires-python = ">=3.10"
-description = "Prepared population-epidemiology research evaluations"
+description = "Python API for Rust stochastic population models: SIR via finite state projection, neutral Moran drift and two-state rate calendars"
+keywords = ["epidemiology", "SIR model", "finite state projection", "Moran process", "stochastic processes", "population dynamics", "simulation", "Rust"]
+
+[project.urls]
+Repository = "https://github.com/dietmarwo/population-epidemiology"
 
 [tool.maturin]
 module-name = "population_epidemiology._native"
