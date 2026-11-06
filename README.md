@@ -2,6 +2,8 @@
 
 # population-epidemiology 0.3.0
 
+> **One of 18 related repositories.** The [repository overview](https://github.com/dietmarwo/fcmaes-rust/blob/main/docs/repositories.md) shows what each one does and how they connect.
+
 A bounded research evaluator for small stochastic population models: a
 fixed-population SIR model solved by finite state projection, neutral
 two-mutant Moran drift, and an exact two-state rate calendar. See the
