@@ -9,7 +9,7 @@ series bounds and the roundoff mass residual. It preserves unnormalized
 probabilities. Trace mode includes the full FSP result. Since 0.3.0 the
 package builds the SIR state space and generator layout once per model and
 runs the same uniformization arithmetic for each rate binding, so means,
-diagnostics, traces and work counts are bit-identical to the vendored
+diagnostics, traces and work counts are bit-identical to the
 CRN-craft solver, which still runs for deadline or cancel-file budgets
 and for zero rates.
 

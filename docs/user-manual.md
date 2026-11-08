@@ -48,10 +48,11 @@ python -m pip install numpy==2.3.5 scipy==1.17.0 fcmaes   # optional, for the ex
 
 ### From source
 
-Building needs Rust 1.88 or newer and maturin 1.9.6. The source
+Building needs Rust 1.88 or newer and maturin 1.9.6. The 0.3.0 source
 distribution contains the pinned CRN-craft core under `vendor/`, so no
 other Rust source is fetched. Cargo still needs the locked crates.io
-dependencies from its registry or cache.
+dependencies from its registry or cache. A checkout of `main` instead takes
+`crn-craft` 0.4.0 from crates.io with the other locked dependencies.
 
 ```sh
 python -m pip install maturin==1.9.6
@@ -68,9 +69,10 @@ cargo build --release --locked --bins --examples
 target/release/population-epidemiology describe
 ```
 
-The crate cannot be published to crates.io as is, because it depends on the
-vendored CRN-craft core by path. Use the source tree, the source
-distribution or the wheel.
+Up to 0.3.0 the crate could not be packaged for crates.io, because it
+depended on a vendored CRN-craft core by path. A checkout of `main` depends
+on `crn-craft` 0.4.0 from crates.io instead, so `cargo package` works there;
+the crate is not published.
 
 ## 2. Concepts
 
@@ -122,7 +124,7 @@ unit. A model that violates a bound raises `ValueError` in Python
 
 A closed population of N = S + I + R individuals with stochastic counts.
 Infection S + I → 2I has propensity `beta * S * I / N`, and recovery
-I → R has propensity `gamma * I`. The vendored CRN-craft finite state
+I → R has propensity `gamma * I`. The CRN-craft finite state
 projection (FSP) gives the exact count distribution at each sample time
 up to its documented series tail.
 
@@ -194,7 +196,7 @@ for tolerance in (1e-5, 1e-13):
 ```
 
 Rates of exactly 0 are allowed. They change which states are reachable,
-so the package hands them to the vendored CRN-craft solver instead of its
+so the package hands them to the CRN-craft solver instead of its
 prepared projection; the result is the same either way.
 
 ```python
@@ -468,7 +470,7 @@ and the CLI's `budget` object. Every field is optional.
 Deadlines and cancellation are cooperative: they are checked at logical
 steps, so a running step finishes first. SIR's FSP solve also polls them.
 A batch with `wall_ms` or `cancel_file` is *monitored*. Monitored SIR
-candidates run through the vendored CRN-craft solver, which polls the
+candidates run through the CRN-craft solver, which polls the
 deadline and cancel file inside the solve; this is about ten times slower
 per candidate than the prepared projection (section 12) but gives the
 same results. Moran and calendar candidates check every logical step when
@@ -721,12 +723,12 @@ CLI prints its JSON with sorted keys.
   request, so whitespace or key order there changes the hash.
 - SIR full records add `crn_model_sha256` and `crn_run_sha256`, the
   hashes of the CRN-craft documents for each rate binding. They are the
-  same whether the prepared projection or the vendored solver ran.
+  same whether the prepared projection or the CRN-craft solver ran.
 - Results do not depend on the worker count or on which SIR kernel ran.
   Fixed-work replays (no deadline) are deterministic for a given build.
 - `version` in every result and `build_sha256` in campaign rows identify
   the code that produced a record.
-- The vendored CRN-craft core is pinned; see the [source notes](sources.md).
+- The CRN-craft version is pinned (`=0.4.0`); see the [source notes](sources.md).
 
 ```python
 encoded = json.dumps(case["model"], sort_keys=True, separators=(",", ":"), allow_nan=False)
@@ -764,7 +766,7 @@ full 0.2.0 to 0.3.0 comparison.
 - **Traces are larger still.** A traced SIR record took 46.5 µs with the
   prepared projection.
 - **Avoid monitored budgets in tight SIR loops.** A `wall_ms` or
-  `cancel_file` budget routes SIR through the vendored solver: 154.6 µs
+  `cancel_file` budget routes SIR through the CRN-craft solver: 154.6 µs
   instead of 16.1 µs for one lean candidate. Moran and calendar are not
   affected this way.
 - **Workers.** On this 2-vCPU host the 96-candidate SIR batch took

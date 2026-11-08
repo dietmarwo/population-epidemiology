@@ -2,7 +2,7 @@
 
 Input plan SHA-256 `dfadb788cb7b6e046fbb19967620df87fbeb1a43fe47f1b44121cc4d11803875`.
 
-The MIT CRN-craft core is bundled at local commit `915d3a7a16a14f07c9fdada1a7df79f6101948ca`. The vendor workspace lists only the core crate. Core runtime sources are byte-identical to that commit. The companion distribution preserves upstream licensing and notices. The old vaccination example is planning context only.
+The MIT CRN-craft core comes from crates.io as `crn-craft` 0.4.0, whose package carries its license and third-party notices. Up to 0.3.0 it was bundled under `vendor/` at local commit `915d3a7a16a14f07c9fdada1a7df79f6101948ca`, with only the core crate in the vendor workspace and core runtime sources byte-identical to that commit; the 0.3.0 source distribution keeps that copy with its upstream license and notices. The old vaccination example is planning context only.
 
 ## Plan references
 

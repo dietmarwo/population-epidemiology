@@ -17,11 +17,7 @@ module-name = "population_epidemiology._native"
 python-source = "python"
 features = ["python"]
 include = [
-  { path = "vendor/crn-craft/**/*", format = "sdist" },
   { path = "models/*.json", format = "sdist" },
   { path = "docs/*.md", format = "sdist" },
   { path = "validation/*.py", format = "sdist" },
-]
-exclude = [
-  { path = "vendor/crn-craft/target/**/*", format = "sdist" },
 ]

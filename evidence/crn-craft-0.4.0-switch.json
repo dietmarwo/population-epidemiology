@@ -1,0 +1,69 @@
+{
+  "after": {
+    "dependency": "crates.io crn-craft =0.4.0"
+  },
+  "before": {
+    "crn_craft_workspace_version": "0.2.0-dev.1",
+    "dependency": "path vendor/crn-craft/crates/crn-craft"
+  },
+  "cargo_test_release_locked_passed": 13,
+  "comparisons": [
+    {
+      "bytes": 198,
+      "check": "CLI output: describe",
+      "identical": true,
+      "sha256": "a605daeedb6620b0aaffde93edc036f520a53c977af6bde6938afa3244ef05fd"
+    },
+    {
+      "bytes": 10973,
+      "check": "CLI output: run models/request.json",
+      "identical": true,
+      "sha256": "251a77a5f895c925bbe891ff7926a369b7390aa542d85f896d6e646f52ec33d9"
+    },
+    {
+      "bytes": 1202,
+      "check": "CLI output: example sweep models/example.json",
+      "identical": true,
+      "sha256": "52e109e7f2cb2ce9c1beb5617b44b117ccf87da73260a9737fcfbf044c2b057e"
+    },
+    {
+      "bytes": 109,
+      "check": "CLI output: example matrix_scan models/example.json",
+      "identical": true,
+      "sha256": "00bb7803c1187272fc599a3bd1693b6394945e500843e4bc60b0d4412d303f28"
+    },
+    {
+      "check": "validation/validate.py report",
+      "equals_recorded_evidence": true,
+      "identical": true,
+      "sha256": "74cde98f05a33393dfce5983b78c3094245f9d2d39f17607ad99669aa5b6c164"
+    },
+    {
+      "check": "campaign replay of models/campaign.json, without build_sha256 and key",
+      "equals_recorded_evidence": true,
+      "identical": true
+    },
+    {
+      "check": "validation/installed.py on the installed wheel, without timings",
+      "identical": true
+    }
+  ],
+  "fsp_solver_code_identical_without_comments": true,
+  "interpretation": "Outputs that carry no timing are byte-identical between the two dependencies; timing fields were excluded where they occur.",
+  "release_checks": {
+    "lean_api_and_budget_parity": true,
+    "manual_python_blocks": 18,
+    "matrix_api_parity": true,
+    "numpy_matrix_input": true,
+    "status": "passed",
+    "tutorial_python_blocks": 5
+  },
+  "schema": "population-epidemiology.crn-craft-switch/0.1",
+  "toolchain": {
+    "maturin": "1.9.6",
+    "numpy": "2.3.5",
+    "python": "Python 3.13.18",
+    "rustc": "rustc 1.97.0 (2d8144b78 2026-07-07)",
+    "scipy": "1.17.0"
+  }
+}
