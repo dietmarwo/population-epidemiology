@@ -7,9 +7,9 @@
 //! column order do not depend on the rate values. This module builds them
 //! once. A candidate binds its two rates to that structure and runs the
 //! solver's uniformization arithmetic in the same order, so means,
-//! diagnostics and the FSP work count are bit-identical to the vendored
+//! diagnostics and the FSP work count are bit-identical to the CRN-craft
 //! solver. Whenever a candidate reaches a condition that this kernel does not
-//! reproduce, `solve` returns `None` and the caller runs the vendored solver.
+//! reproduce, `solve` returns `None` and the caller runs the CRN-craft solver.
 use crn_craft::fsp::{FspSnapshot, MAX_WORK};
 use std::collections::HashMap;
 
@@ -78,7 +78,7 @@ pub enum Detail {
     Means,
     /// Means and per-snapshot error diagnostics.
     Diagnostics,
-    /// Diagnostics and the vendored solver's full trace.
+    /// Diagnostics and CRN-craft's solver's full trace.
     Trace,
 }
 
@@ -89,9 +89,9 @@ pub struct Solution {
     /// Physical leakage, series tail bound, mass defect and roundoff
     /// residual at each sample time, filled only when requested.
     pub errors: Vec<[f64; 4]>,
-    /// The vendored solver's work count.
+    /// CRN-craft's solver's work count.
     pub work: u64,
-    /// The rest of the vendored solver's result in trace mode.
+    /// The rest of CRN-craft's solver's result in trace mode.
     pub trace: Option<Trace>,
 }
 
@@ -188,7 +188,7 @@ impl Projection {
         }
     }
 
-    /// Whether the vendored solver's rate-independent output and workspace
+    /// Whether CRN-craft's solver's rate-independent output and workspace
     /// checks pass for this structure, so they cannot fail for a binding.
     pub fn fits_budgets(&self) -> bool {
         let n = self.infected.len() as u128;
@@ -233,7 +233,7 @@ impl Projection {
     }
 
     /// Solve one binding of the mass-action coefficients, or return `None`
-    /// when the vendored solver must decide the outcome.
+    /// when the CRN-craft solver must decide the outcome.
     pub fn solve(&self, infection: f64, gamma: f64, detail: Detail) -> Option<Solution> {
         let diagnostics = detail != Detail::Means;
         let traced = detail == Detail::Trace;
@@ -427,7 +427,7 @@ impl Projection {
                     .sum(),
             );
             if traced {
-                // The vendored solver's snapshot, field by field.
+                // CRN-craft's solver's snapshot, field by field.
                 snapshots.push(FspSnapshot {
                     time,
                     probabilities: cells.iter().map(|&c| p[c]).collect(),
@@ -556,7 +556,7 @@ impl Grid {
 
     /// `next = term · P` and `result += weight * next` on the grid, with the
     /// sink keeping its mass. Each cell adds its recovery source, infection
-    /// source and diagonal in the vendored solver's order; a missing
+    /// source and diagonal in CRN-craft's solver's order; a missing
     /// transition has weight 0 and adds +0.0 to a non-negative sum.
     fn multiply_accumulate(
         &self,
@@ -591,7 +591,7 @@ impl Grid {
     }
 }
 
-/// The vendored solver's omitted Poisson weight after term `first - 1`.
+/// CRN-craft's solver's omitted Poisson weight after term `first - 1`.
 fn omitted_weight(first_weight: f64, mu: f64, first: u64) -> f64 {
     let mut term = first_weight;
     let mut sum = 0.0;
@@ -605,8 +605,8 @@ fn omitted_weight(first_weight: f64, mu: f64, first: u64) -> f64 {
 }
 
 /// One series term, `next = term · P`, with the sink (index n) keeping its
-/// mass, fused with `result += weight * next`, as in the vendored solver.
-/// The vendored solver starts each column at 0.0 and adds its entries in
+/// mass, fused with `result += weight * next`, as in the CRN-craft solver.
+/// The CRN-craft solver starts each column at 0.0 and adds its entries in
 /// ascending source order; `0.0 + x` is `x` and a padded slot adds +0.0 to a
 /// non-negative sum, so each column's value is bitwise unchanged.
 fn multiply_accumulate(
@@ -639,7 +639,7 @@ mod tests {
     use super::*;
     use crate::domain::sir_documents;
 
-    /// Compare one binding with the vendored solver bit for bit, with the
+    /// Compare one binding with the CRN-craft solver bit for bit, with the
     /// grid stencil and with the slot kernel.
     fn compare(initial: [u32; 3], times: &[f64], tolerance: f64, beta: f64, gamma: f64) {
         compare_kernel(initial, times, tolerance, beta, gamma, true);
@@ -725,7 +725,7 @@ mod tests {
     }
 
     #[test]
-    fn prepared_projection_matches_the_vendored_solver_bit_for_bit() {
+    fn prepared_projection_matches_the_crn_craft_solver_bit_for_bit() {
         let grids: [&[f64]; 4] = [
             &[0.0, 1.0, 2.0, 3.0, 5.0],
             &[0.0, 0.1],

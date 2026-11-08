@@ -81,9 +81,10 @@ Independent numerical scripts use Python 3.12. The matrix-exponential and
 labeled-population oracles use NumPy 2.3.5 and SciPy 1.17.0. The optional
 `validation/optimize.py population_epidemiology` demonstrates an in-process SciPy DE objective.
 The native sweep needs only the Rust crate. See `evidence/` for actual runs.
-The CRN-craft core is vendored by path (a pre-release source, workspace
-version 0.2.0-dev.1), so the crate cannot be packaged for a registry; the
-source distribution and wheel carry it. CRN-craft has since been published
-on crates.io (0.2.0 and later); this release still builds against the
-vendored copy. The ordered change series is in `patches/0.3.0/` (from the
+After 0.3.0, `main` depends on `crn-craft` 0.4.0 from crates.io instead of
+the vendored pre-release core (workspace version 0.2.0-dev.1) that 0.3.0
+built against by path; outputs are unchanged
+([comparison](evidence/crn-craft-0.4.0-switch.json)), and `cargo package`
+now produces a registry crate (not published). The 0.3.0 packages in
+`packages/` still carry the vendored core. The ordered change series is in `patches/0.3.0/` (from the
 0.2.0 import) and `patches/0.2.0/` (the 0.2.0 series from 0.1.0).

@@ -32,8 +32,8 @@ flowchart TD
 | Python boundary | `python/population_epidemiology/__init__.py`, PyO3 module in `src/lib.rs` | encode once per batch, release the GIL during native evaluation, decode the result envelope; `score_matrix` passes rows without JSON |
 | Prepared engine | `src/lib.rs` | own immutable domain data, enforce batch rules, dispatch candidates or rows, keep ordered results |
 | Domain | `src/domain.rs` | bind a candidate, run the model kernel, classify status, compute the minimization objective and serialized metrics |
-| SIR projection | `src/sir_fsp.rs` | rate-independent SIR state space and generator layout, prepared uniformization that reproduces the vendored solver |
-| Vendored solver | `vendor/crn-craft` | CRN-craft 0.2.0-dev.1 core; FSP reference and fallback path |
+| SIR projection | `src/sir_fsp.rs` | rate-independent SIR state space and generator layout, prepared uniformization that reproduces the CRN-craft solver |
+| CRN-craft solver | `crn-craft` 0.4.0 from crates.io | FSP reference and fallback path |
 | Campaign | `python/population_epidemiology/campaign.py` | local SQLite replay, attempt journal and complete-result caching |
 | Verification | `validation/`, `examples/`, `evidence/` | independent checks, executable examples, paired performance observations and the time breakdown |
 
@@ -100,7 +100,7 @@ CRN-craft's order (infection before recovery), builds the generator by
 column and checks the solver's output-reservation, workspace and
 output-size limits once. A model that CRN-craft rejects, for example a
 save grid that does not start at 0, keeps no projection, so every
-candidate takes the vendored path and reports its diagnostics.
+candidate takes the CRN-craft path and reports its diagnostics.
 
 Every transition lowers 2S + I by one, so breadth-first discovery
 numbers states level by level, and within a level by ascending S. Each
@@ -112,7 +112,7 @@ a zero-padded (S, I) grid, and each product row runs over three
 contiguous streams. If the check failed, a fixed three-slot column kernel
 with explicit source indexes would be used. A padded slot adds +0.0 to a
 non-negative sum, and the first product equals `0.0 + product`, so both
-kernels add every column's terms exactly as the vendored solver does.
+kernels add every column's terms exactly as the CRN-craft solver does.
 
 Per candidate, the domain computes `infection = beta / N` and, for an
 unmonitored candidate with positive normal rates, binds the two
@@ -123,14 +123,14 @@ its tail rule, and the snapshot moments, mass and checks in discovery
 order. Means, error diagnostics and the FSP work count are bit-identical
 to `crn_craft::fsp::solve`. A traced candidate also gets the full
 `FspResult`, assembled from the same snapshots with the document hashes.
-The domain falls back to the vendored solver for monitored budgets (the
+The domain falls back to the CRN-craft solver for monitored budgets (the
 solver polls the deadline and cancel file inside the solve), for rates
 that are zero or not normal (they change the reachable set or the
 propensity kernel), and whenever the prepared path meets a runtime limit
 such as the solver's work cap. The fallback then produces the identical
-result or diagnostic. Unit tests compare both kernels with the vendored
+result or diagnostic. Unit tests compare both kernels with the CRN-craft
 solver bit for bit over about 430 bindings and compare whole records
-against a forced vendored path.
+against a forced CRN-craft path.
 
 Full records still build the two CRN-craft documents per candidate to
 report `crn_model_sha256` and `crn_run_sha256`. SIR metrics serialize
@@ -169,7 +169,7 @@ prepared metrics.
 | Round | Change |
 | --- | --- |
 | 1 | `Prepared::score_matrix`, `MatrixScore`, the Python `score_matrix`, a shared `dispatch` and `outcome` path, a matrix benchmark mode |
-| 2 | prepared SIR projection with rate binding and vendored-solver fallback (`src/sir_fsp.rs`) |
+| 2 | prepared SIR projection with rate binding and CRN-craft solver fallback (`src/sir_fsp.rs`) |
 | 3 | Moran update gathered by target state |
 | 4 | bulk charging of unmonitored Moran steps |
 | 5 | metrics carried as serialized JSON; calendar metrics rendered at preparation |
@@ -185,17 +185,20 @@ and `--after-matrix`; a matrix side normalizes `metrics` and `detail` to
 null on both sides. `examples/breakdown.rs` measures the time breakdown
 below.
 
-### Vendored CRN-craft and packaging
+### CRN-craft dependency and packaging
 
-`vendor/crn-craft` is unchanged from 0.2.0; there is no vendored patch.
-The prepared SIR path lives in this crate and calls only CRN-craft's
-public `check_bytes`, `sha256`, `fsp::solve` and `fsp` types. When this
-release was prepared, CRN-craft was not on crates.io (`cargo info crn-craft`
-and the crates.io API, checked on 4 November 2026); it has been published
-since (0.2.0 and later). The vendored pre-release core (workspace version
-0.2.0-dev.1) stays a path dependency, and `cargo package` cannot
-produce a registry crate for this package. The source tree, source
-distribution and wheel carry the pinned core.
+The crate depends on `crn-craft = "=0.4.0"` from crates.io. The prepared
+SIR path lives in this crate and calls only CRN-craft's public
+`check_bytes`, `sha256`, `fsp::solve` and `fsp` types.
+
+Up to 0.3.0 the crate built against a vendored pre-release core
+(`vendor/crn-craft`, workspace version 0.2.0-dev.1) as a path dependency,
+because CRN-craft was not on crates.io when 0.3.0 was prepared (checked on
+4 November 2026). That path dependency kept `cargo package` from producing
+a registry crate; the 0.3.0 source distribution and wheel in `packages/`
+carry that core. Its FSP solver code is the same as in crn-craft 0.4.0
+apart from documentation comments, and the switch changes no result: see
+[the comparison](../evidence/crn-craft-0.4.0-switch.json).
 
 ## Persistence and boundaries of evidence
 
@@ -273,7 +276,7 @@ Per-call cost per candidate:
 | Calendar, 48 per call | 0.02 | 0.27 | 0.81 |
 
 One SIR candidate through the prepared projection took 16.1 µs (lean)
-and 46.5 µs (traced, full). Through the vendored solver, which a
+and 46.5 µs (traced, full). Through the CRN-craft solver, which a
 cancel-file budget selects, it took 154.6 µs and 173.3 µs.
 
 ### Worker scaling
@@ -327,7 +330,7 @@ the CRN-craft documents and builds the projection.
   known saving for full SIR records.
 - **SIR lean and matrix** calls are dominated by the uniformization
   series (about 119 terms over 75 states for the packaged fixture), which
-  must keep the vendored solver's arithmetic to stay bit-identical.
+  must keep CRN-craft's solver's arithmetic to stay bit-identical.
 - **Moran** is dominated by the stencil sweep: (N+1)(N+2)/2 states times
   nine slots per update.
 - **Calendar** evaluation is a constant-time lookup. Its full records are
@@ -342,7 +345,7 @@ Guidance:
 - Use at most one worker per CPU. On two vCPUs, two workers gave the best
   times, and single candidates always run inline.
 - Keep `wall_ms` and `cancel_file` out of tight SIR loops. Monitored
-  budgets take the vendored solver at about ten times the cost per
+  budgets take the CRN-craft solver at about ten times the cost per
   candidate. Use them for long Moran runs and campaigns.
 - From Python, batch candidates per call (a whole population in one
   `score_matrix` call), since per-call Python and optimizer overheads

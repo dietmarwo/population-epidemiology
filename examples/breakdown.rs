@@ -5,7 +5,7 @@
 //! candidate decoding alone, the typed matrix API (evaluation without
 //! JSON), lean `scores_json` and full `evaluate_json`. The differences give
 //! the JSON boundary and the cost of full-record metrics. It also times model
-//! preparation, the vendored-solver fallback for one SIR candidate (a
+//! preparation, the CRN-craft solver fallback for one SIR candidate (a
 //! cancel-file budget routes SIR through `crn_craft::fsp::solve`) and worker
 //! scaling for the 96-candidate SIR batch.
 use population_epidemiology::{Candidate, Prepared};
@@ -118,11 +118,11 @@ fn main() {
     ];
 
     // One SIR candidate through the prepared projection and through the
-    // vendored solver, which a cancel-file budget selects.
+    // CRN-craft solver, which a cancel-file budget selects.
     let prepared = Prepared::new(&sir.to_string()).unwrap();
     let (one, _) = candidates(1, &fit);
     let absent = std::env::temp_dir().join(format!("breakdown-absent-{}", std::process::id()));
-    let vendored = json!({"cancel_file": absent}).to_string();
+    let crn_solver = json!({"cancel_file": absent}).to_string();
     let mut traced: Value = serde_json::from_str(&one).unwrap();
     traced[0]["trace"] = json!(true);
     let traced = traced.to_string();
@@ -134,13 +134,13 @@ fn main() {
                 black_box(prepared.scores_json(&one, "{}").unwrap());
             },
             &mut || {
-                black_box(prepared.scores_json(&one, &vendored).unwrap());
+                black_box(prepared.scores_json(&one, &crn_solver).unwrap());
             },
             &mut || {
                 black_box(prepared.evaluate_json(&traced, "{}").unwrap());
             },
             &mut || {
-                black_box(prepared.evaluate_json(&traced, &vendored).unwrap());
+                black_box(prepared.evaluate_json(&traced, &crn_solver).unwrap());
             },
         ],
     );
@@ -175,8 +175,8 @@ fn main() {
             "available_parallelism": std::thread::available_parallelism().map(usize::from).ok(),
             "workloads": workloads,
             "sir_one_candidate": {
-                "prepared_lean_us": fallback[0], "vendored_solver_lean_us": fallback[1],
-                "prepared_traced_full_us": fallback[2], "vendored_solver_traced_full_us": fallback[3],
+                "prepared_lean_us": fallback[0], "crn_solver_lean_us": fallback[1],
+                "prepared_traced_full_us": fallback[2], "crn_solver_traced_full_us": fallback[3],
             },
             "sir_96_worker_scaling": scaling,
         }))

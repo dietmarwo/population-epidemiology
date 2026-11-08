@@ -661,9 +661,9 @@ mod tests {
     }
 
     #[test]
-    fn prepared_sir_records_equal_the_vendored_solver_records() {
+    fn prepared_sir_records_equal_the_crn_craft_solver_records() {
         // A cancel-file budget whose file never exists routes every SIR
-        // candidate through the vendored solver with identical documents.
+        // candidate through the CRN-craft solver with identical documents.
         let absent = std::env::temp_dir().join(format!("pe-absent-{}", std::process::id()));
         let reference = json!({"cancel_file": absent}).to_string();
         let mut example = fixture();

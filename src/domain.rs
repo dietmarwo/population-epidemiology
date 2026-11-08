@@ -374,7 +374,7 @@ pub fn evaluate(model: &Model, parameters: &[f64], trace: bool, work: &mut Work<
                         solution,
                         model_sha256,
                         run_sha256,
-                        // The vendored solver never certifies its numerical error.
+                        // The CRN-craft solver never certifies its numerical error.
                         certified: false,
                         trace,
                     })
