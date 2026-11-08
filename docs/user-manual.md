@@ -52,7 +52,7 @@ Building needs Rust 1.88 or newer and maturin 1.9.6. The 0.3.0 source
 distribution contains the pinned CRN-craft core under `vendor/`, so no
 other Rust source is fetched. Cargo still needs the locked crates.io
 dependencies from its registry or cache. A checkout of `main` instead takes
-`crn-craft` 0.4.0 from crates.io with the other locked dependencies.
+`crn-craft` 0.5.0 from crates.io with the other locked dependencies.
 
 ```sh
 python -m pip install maturin==1.9.6
@@ -71,7 +71,7 @@ target/release/population-epidemiology describe
 
 Up to 0.3.0 the crate could not be packaged for crates.io, because it
 depended on a vendored CRN-craft core by path. A checkout of `main` depends
-on `crn-craft` 0.4.0 from crates.io instead, so `cargo package` works there;
+on `crn-craft` 0.5.0 from crates.io instead, so `cargo package` works there;
 the crate is not published.
 
 ## 2. Concepts
@@ -728,7 +728,7 @@ CLI prints its JSON with sorted keys.
   Fixed-work replays (no deadline) are deterministic for a given build.
 - `version` in every result and `build_sha256` in campaign rows identify
   the code that produced a record.
-- The CRN-craft version is pinned (`=0.4.0`); see the [source notes](sources.md).
+- The CRN-craft version is pinned (`=0.5.0`); see the [source notes](sources.md).
 
 ```python
 encoded = json.dumps(case["model"], sort_keys=True, separators=(",", ":"), allow_nan=False)

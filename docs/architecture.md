@@ -33,7 +33,7 @@ flowchart TD
 | Prepared engine | `src/lib.rs` | own immutable domain data, enforce batch rules, dispatch candidates or rows, keep ordered results |
 | Domain | `src/domain.rs` | bind a candidate, run the model kernel, classify status, compute the minimization objective and serialized metrics |
 | SIR projection | `src/sir_fsp.rs` | rate-independent SIR state space and generator layout, prepared uniformization that reproduces the CRN-craft solver |
-| CRN-craft solver | `crn-craft` 0.4.0 from crates.io | FSP reference and fallback path |
+| CRN-craft solver | `crn-craft` 0.5.0 from crates.io | FSP reference and fallback path |
 | Campaign | `python/population_epidemiology/campaign.py` | local SQLite replay, attempt journal and complete-result caching |
 | Verification | `validation/`, `examples/`, `evidence/` | independent checks, executable examples, paired performance observations and the time breakdown |
 
@@ -187,7 +187,7 @@ below.
 
 ### CRN-craft dependency and packaging
 
-The crate depends on `crn-craft = "=0.4.0"` from crates.io. The prepared
+The crate depends on `crn-craft = "=0.5.0"` from crates.io. The prepared
 SIR path lives in this crate and calls only CRN-craft's public
 `check_bytes`, `sha256`, `fsp::solve` and `fsp` types.
 
@@ -196,9 +196,12 @@ Up to 0.3.0 the crate built against a vendored pre-release core
 because CRN-craft was not on crates.io when 0.3.0 was prepared (checked on
 4 November 2026). That path dependency kept `cargo package` from producing
 a registry crate; the 0.3.0 source distribution and wheel in `packages/`
-carry that core. Its FSP solver code is the same as in crn-craft 0.4.0
+carry that core. Its FSP solver code is the same as in crn-craft 0.5.0
 apart from documentation comments, and the switch changes no result: see
-[the comparison](../evidence/crn-craft-0.4.0-switch.json).
+[the comparison](../evidence/crn-craft-0.5.0-switch.json). The core crate's
+sources are identical in crn-craft 0.4.0, the first version this crate took
+from crates.io, and 0.5.0
+([0.4.0 comparison](../evidence/crn-craft-0.4.0-switch.json)).
 
 ## Persistence and boundaries of evidence
 
