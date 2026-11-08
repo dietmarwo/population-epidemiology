@@ -77,11 +77,13 @@ maturin sdist --out dist
 maturin build --release --locked --out dist
 ```
 
-Independent numerical scripts use Python 3.12. The oscillator and population
-oracles use NumPy 2.3.5 and SciPy 1.17.0. The optional
+Independent numerical scripts use Python 3.12. The matrix-exponential and
+labeled-population oracles use NumPy 2.3.5 and SciPy 1.17.0. The optional
 `validation/optimize.py population_epidemiology` demonstrates an in-process SciPy DE objective.
 The native sweep needs only the Rust crate. See `evidence/` for actual runs.
-The CRN-craft core is vendored by path because it is not on crates.io, so
-the crate cannot be packaged for a registry; the source distribution and
-wheel carry it. The ordered change series is in `patches/0.3.0/` (from the
+The CRN-craft core is vendored by path (a pre-release source, workspace
+version 0.2.0-dev.1), so the crate cannot be packaged for a registry; the
+source distribution and wheel carry it. CRN-craft has since been published
+on crates.io (0.2.0 and later); this release still builds against the
+vendored copy. The ordered change series is in `patches/0.3.0/` (from the
 0.2.0 import) and `patches/0.2.0/` (the 0.2.0 series from 0.1.0).

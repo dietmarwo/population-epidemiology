@@ -189,10 +189,11 @@ below.
 
 `vendor/crn-craft` is unchanged from 0.2.0; there is no vendored patch.
 The prepared SIR path lives in this crate and calls only CRN-craft's
-public `check_bytes`, `sha256`, `fsp::solve` and `fsp` types. CRN-craft
-0.2.0 is not on crates.io: `cargo info crn-craft` and the crates.io API
-report that the crate does not exist (checked on 4 November 2026). The
-dependency therefore stays a path dependency, and `cargo package` cannot
+public `check_bytes`, `sha256`, `fsp::solve` and `fsp` types. When this
+release was prepared, CRN-craft was not on crates.io (`cargo info crn-craft`
+and the crates.io API, checked on 4 November 2026); it has been published
+since (0.2.0 and later). The vendored pre-release core (workspace version
+0.2.0-dev.1) stays a path dependency, and `cargo package` cannot
 produce a registry crate for this package. The source tree, source
 distribution and wheel carry the pinned core.
 

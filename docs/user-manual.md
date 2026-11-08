@@ -68,8 +68,8 @@ cargo build --release --locked --bins --examples
 target/release/population-epidemiology describe
 ```
 
-The crate cannot be published to crates.io as is, because CRN-craft is a
-path dependency that is not on crates.io. Use the source tree, the source
+The crate cannot be published to crates.io as is, because it depends on the
+vendored CRN-craft core by path. Use the source tree, the source
 distribution or the wheel.
 
 ## 2. Concepts
