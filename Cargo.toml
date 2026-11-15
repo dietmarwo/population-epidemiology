@@ -10,6 +10,7 @@ keywords = ["epidemiology", "sir-model", "moran-process", "stochastic", "simulat
 categories = ["science", "simulation"]
 # Release artifacts, patch series and timing evidence stay out of the source distribution.
 exclude = [
+  "/.github/",
   "/packages/",
   "/patches/",
   "/evidence/performance-0.3.0/",
