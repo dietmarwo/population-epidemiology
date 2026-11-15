@@ -18,6 +18,4 @@ concurrency:
 
 jobs:
   checks:
-    uses: dietmarwo/optimization-jobs/.github/workflows/evaluator-checks.yml@ci/shared-workflows
-    with:
-      tools-ref: ci/shared-workflows
+    uses: dietmarwo/optimization-jobs/.github/workflows/evaluator-checks.yml@main
