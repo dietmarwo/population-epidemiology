@@ -1,0 +1,21 @@
+name: CI
+
+# The checks are shared by the five domain evaluators and live in
+# optimization-jobs (its docs/shared-workflows.md): SHA256SUMS, build, tests,
+# validation/validate.py, the packaged wheel and the Markdown links.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    uses: dietmarwo/optimization-jobs/.github/workflows/evaluator-checks.yml@main
